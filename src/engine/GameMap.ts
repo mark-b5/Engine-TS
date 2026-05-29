@@ -1,7 +1,5 @@
 import fs from 'fs';
 
-import { unzipSync } from 'fflate';
-
 import rsmod, { CollisionFlag, CollisionType, LocAngle, LocLayer } from '#/engine/routefinder/index.js';
 
 import LocType from '#/cache/config/LocType.js';
@@ -19,8 +17,6 @@ import ZoneMap from '#/engine/zone/ZoneMap.js';
 import Packet from '#/io/Packet.js';
 import Environment from '#/util/Environment.js';
 import { printDebug, printFatalError, printWarning } from '#/util/Logger.js';
-
-export type RouteCoordinates = { x: number; z: number };
 
 export default class GameMap {
     private static readonly OPEN: number = 0x0;
@@ -49,37 +45,24 @@ export default class GameMap {
     }
 
     init(): void {
-        if (!fs.existsSync(`${Environment.build.srcDir}/maps`)) {
+        if (!fs.existsSync(`${Environment.BUILD_SRC_DIR}/maps`)) {
             return;
         }
 
-        printDebug('Loading game map');
+        // Allow zones to be auto-created during map loading
+        this.zonemap.beginInitialization();
 
-        if (fs.existsSync(`${Environment.build.srcDir}/maps/multiway.csv`)) {
-            this.loadCsvMap(this.multimap, fs.readFileSync(`${Environment.build.srcDir}/maps/multiway.csv`, 'ascii').split(/\r?\n/));
-        }
+        try {
+            printDebug('Loading game map');
 
-        if (fs.existsSync(`${Environment.build.srcDir}/maps/free2play.csv`)) {
-            this.loadCsvMap(this.freemap, fs.readFileSync(`${Environment.build.srcDir}/maps/free2play.csv`, 'ascii').split(/\r?\n/));
-        }
-
-        const zipPath = 'data/pack/.cache/maps-server.zip';
-        if (fs.existsSync(zipPath)) {
-            const mapEntries = unzipSync(fs.readFileSync(zipPath));
-            const maps: string[] = Object.keys(mapEntries).filter(name => name[0] === 'm');
-            for (let index: number = 0; index < maps.length; index++) {
-                const [mx, mz] = maps[index].substring(1).split('_').map(Number);
-                const mapsquareX: number = mx << 6;
-                const mapsquareZ: number = mz << 6;
-
-                this.loadNpcs(new Packet(mapEntries[`n${mx}_${mz}`] ?? new Uint8Array()), mapsquareX, mapsquareZ);
-                this.loadObjs(new Packet(mapEntries[`o${mx}_${mz}`] ?? new Uint8Array()), mapsquareX, mapsquareZ);
-                // collision
-                const lands: Int8Array = new Int8Array(GameMap.MAPSQUARE); // 4 * 64 * 64 size is guaranteed for lands
-                this.loadGround(lands, new Packet(mapEntries[`m${mx}_${mz}`]), mapsquareX, mapsquareZ);
-                this.loadLocations(lands, new Packet(mapEntries[`l${mx}_${mz}`]), mapsquareX, mapsquareZ);
+            if (fs.existsSync(`${Environment.BUILD_SRC_DIR}/maps/multiway.csv`)) {
+                this.loadCsvMap(this.multimap, fs.readFileSync(`${Environment.BUILD_SRC_DIR}/maps/multiway.csv`, 'ascii').split(/\r?\n/));
             }
-        } else {
+
+            if (fs.existsSync(`${Environment.BUILD_SRC_DIR}/maps/free2play.csv`)) {
+                this.loadCsvMap(this.freemap, fs.readFileSync(`${Environment.BUILD_SRC_DIR}/maps/free2play.csv`, 'ascii').split(/\r?\n/));
+            }
+
             const path: string = 'data/pack/server/maps/';
             const maps: string[] = fs.readdirSync(path).filter(x => x[0] === 'm');
             for (let index: number = 0; index < maps.length; index++) {
@@ -94,9 +77,12 @@ export default class GameMap {
                 this.loadGround(lands, Packet.load(`${path}m${mx}_${mz}`), mapsquareX, mapsquareZ);
                 this.loadLocations(lands, Packet.load(`${path}l${mx}_${mz}`), mapsquareX, mapsquareZ);
             }
-        }
 
-        printDebug(`${World.getTotalNpcs()}/${Environment.runtime.maxNpcs} static NPCs added`);
+            printDebug(`${World.getTotalNpcs()}/${Environment.NODE_MAX_NPCS} static NPCs added`);
+        } finally {
+            // Lock down zone creation after map is fully loaded
+            this.zonemap.endInitialization();
+        }
     }
 
     isMulti(coord: number): boolean {
@@ -109,11 +95,52 @@ export default class GameMap {
     }
 
     getZone(x: number, z: number, level: number): Zone {
-        return this.zonemap.zone(x, z, level);
+        return this.zonemap.getZone(x, z, level);
     }
 
     getZoneIndex(zoneIndex: number): Zone {
-        return this.zonemap.zoneByIndex(zoneIndex);
+        return this.zonemap.getZoneByIndex(zoneIndex);
+    }
+
+    getZoneIndexIfExists(zoneIndex: number): Zone | null {
+        return this.zonemap.getZoneByIndexIfExists(zoneIndex);
+    }
+
+    /**
+     * Get a zone if it exists, or null if it hasn't been created.
+     */
+    getZoneIfExists(x: number, z: number, level: number): Zone | null {
+        return this.zonemap.getZoneIfExists(x, z, level);
+    }
+
+    /**
+     * Create a new zone during world startup. Should only be called from init().
+     */
+    createZone(x: number, z: number, level: number): Zone {
+        return this.zonemap.createZone(x, z, level);
+    }
+
+    /**
+     * Create a new InstanceZone. Should only be called during instance creation.
+     */
+    createInstanceZone(zoneIndex: number): Zone {
+        return this.zonemap.createInstanceZone(zoneIndex);
+    }
+
+    hasZone(x: number, z: number, level: number): boolean {
+        return this.zonemap.hasZone(x, z, level);
+    }
+
+    isInitializing(): boolean {
+        return this.zonemap.isInitializingMap();
+    }
+
+    addZone(zone: Zone): Zone {
+        return this.zonemap.addZone(zone);
+    }
+
+    removeZone(index: number): boolean {
+        return this.zonemap.removeZone(index);
     }
 
     getZoneGrid(level: number): ZoneGrid {
@@ -150,7 +177,7 @@ export default class GameMap {
                 }
                 if ((npcType.members && this.members) || !npcType.members) {
                     const size: number = npcType.size;
-                    const npc: Npc = new Npc(level, absoluteX, absoluteZ, size, size, EntityLifeCycle.RESPAWN, World.getNextNid(), npcType.id, npcType.blockwalk);
+                    const npc: Npc = new Npc(level, absoluteX, absoluteZ, size, size, EntityLifeCycle.RESPAWN, World.getNextNid(), npcType.id, npcType.moverestrict, npcType.blockwalk);
                     World.addNpc(npc, -1);
                 }
             }
@@ -281,7 +308,7 @@ export default class GameMap {
                     changeLocCollision(shape, angle, type.blockrange, length, width, type.active, absoluteX, absoluteZ, actualLevel, true);
                 }
 
-                if (type.active) {
+                if (type.active === 1) {
                     this.getZone(absoluteX, absoluteZ, actualLevel).addStaticLoc(new Loc(actualLevel, absoluteX, absoluteZ, width, length, EntityLifeCycle.RESPAWN, locId, shape, angle));
                 }
             }
@@ -362,9 +389,6 @@ export function changeLocCollision(shape: number, angle: number, blockrange: boo
         }
     }
 }
-export function findNaivePath(level: number, srcX: number, srcZ: number, destX: number, destZ: number, srcWidth: number, srcHeight: number, destWidth: number, destHeight: number, extraFlag: number, collision: CollisionType): Uint32Array {
-    return rsmod.findNaivePath(level, srcX, srcZ, destX, destZ, srcWidth, srcHeight, destWidth, destHeight, extraFlag, collision);
-}
 
 /**
  * Change collision at a specified Position for npcs.
@@ -413,6 +437,10 @@ export function findPathToLoc(level: number, srcX: number, srcZ: number, destX: 
     return rsmod.findPath(level, srcX, srcZ, destX, destZ, srcSize, destWidth, destHeight, angle, shape, true, blockAccessFlags, 25, CollisionType.NORMAL);
 }
 
+export function findNaivePath(level: number, srcX: number, srcZ: number, destX: number, destZ: number, srcWidth: number, srcHeight: number, destWidth: number, destHeight: number, extraFlag: number, collision: CollisionType): Uint32Array {
+    return rsmod.findNaivePath(level, srcX, srcZ, destX, destZ, srcWidth, srcHeight, destWidth, destHeight, extraFlag, collision);
+}
+
 export function reachedEntity(level: number, srcX: number, srcZ: number, destX: number, destZ: number, destWidth: number, destHeight: number, srcSize: number): boolean {
     return rsmod.reached(level, srcX, srcZ, destX, destZ, destWidth, destHeight, srcSize, 0, -2, 0);
 }
@@ -426,7 +454,7 @@ export function reachedObj(level: number, srcX: number, srcZ: number, destX: num
 }
 
 export function canTravel(level: number, x: number, z: number, offsetX: number, offsetZ: number, size: number, extraFlag: number, collision: CollisionType): boolean {
-    if (!Environment.node.members && !World.gameMap.isFreeToPlay(x + offsetX, z + offsetZ)) {
+    if (!Environment.NODE_MEMBERS && !World.gameMap.isFreeToPlay(x + offsetX, z + offsetZ)) {
         return false;
     }
     return rsmod.canTravel(level, x, z, offsetX, offsetZ, size, extraFlag, collision);

@@ -1,4 +1,6 @@
-import { PlayerInfoProt, Visibility } from '#/network/rsbuf/index.js';
+import 'dotenv/config';
+
+import { PlayerInfoProt, Visibility } from '@2004scape/rsbuf';
 import { CollisionFlag, CollisionType } from '#/engine/routefinder/index.js';
 
 import Component from '#/cache/config/Component.js';
@@ -22,7 +24,7 @@ import { EntityTimer, PlayerTimerType } from '#/engine/entity/EntityTimer.js';
 import HeroPoints from '#/engine/entity/HeroPoints.js';
 import Loc from '#/engine/entity/Loc.js';
 import { ModalState } from '#/engine/entity/ModalState.js';
-import { AllowRepath } from './AllowRepath.js';
+import { MoveRestrict } from '#/engine/entity/MoveRestrict.js';
 import { MoveSpeed } from '#/engine/entity/MoveSpeed.js';
 import { MoveStrategy } from '#/engine/entity/MoveStrategy.js';
 import { isClientConnected } from '#/engine/entity/NetworkPlayer.js';
@@ -54,6 +56,7 @@ import MidiJingle from '#/network/game/server/model/MidiJingle.js';
 import MidiSong from '#/network/game/server/model/MidiSong.js';
 import ResetAnims from '#/network/game/server/model/ResetAnims.js';
 import ResetClientVarCache from '#/network/game/server/model/ResetClientVarCache.js';
+import SetMultiway from '#/network/game/server/model/SetMultiway.js';
 import TutOpen from '#/network/game/server/model/TutOpen.js';
 import UnsetMapFlag from '#/network/game/server/model/UnsetMapFlag.js';
 import UpdateInvStopTransmit from '#/network/game/server/model/UpdateInvStopTransmit.js';
@@ -72,7 +75,6 @@ import LinkList from '#/datastruct/LinkList.js';
 import VarBitType from '#/cache/config/VarBitType.js';
 import FriendlistLoaded from '#/network/game/server/model/FriendlistLoaded.js';
 import UpdateIgnoreList from '#/network/game/server/model/UpdateIgnoreList.js';
-import Midi from '#/cache/midi/Midi.js';
 
 const levelExperience = new Int32Array(99);
 
@@ -99,6 +101,13 @@ export function getExpByLevel(level: number) {
 }
 
 export default class Player extends PathingEntity {
+    // Instance tiles are hosted in a low-x reserved band; overworld tiles are outside this threshold.
+    static readonly INSTANCE_X_THRESHOLD: number = 2048;
+
+    static isInstanceX(x: number): boolean {
+        return x < Player.INSTANCE_X_THRESHOLD;
+    }
+
     static readonly DESIGN_BODY_COLORS: number[][] = [
         [6798, 107, 10283, 16, 4797, 7744, 5799, 4634, 33697, 22433, 2983, 54193],
         [8741, 12, 64030, 43162, 7735, 8404, 1701, 38430, 24094, 10153, 56621, 4783, 1341, 16578, 35003, 25239],
@@ -270,6 +279,12 @@ export default class Player extends PathingEntity {
         // last login info
         sav.p8(this.lastLoginTime);
 
+        // persistent overworld fallback tile used when logging back in from instance coords
+        sav.p2(this.previousOverworldX);
+        sav.p2(this.previousOverworldZ);
+        sav.p1(this.previousOverworldLevel);
+        sav.p1(this.hasPreviousOverworldTile ? 1 : 0);
+
         sav.p4(Packet.getcrc(sav.data, 0, sav.pos));
         return sav.data.subarray(0, sav.pos);
     }
@@ -322,6 +337,13 @@ export default class Player extends PathingEntity {
     lastLevels: Uint8Array = new Uint8Array(21); // we track this so we know to flush stats only once a tick on changes
     originX: number = -1;
     originZ: number = -1;
+
+    // Last known overworld tile; updated when transitioning from overworld -> instance.
+    previousOverworldX: number = 0;
+    previousOverworldZ: number = 0;
+    previousOverworldLevel: number = 0;
+    hasPreviousOverworldTile: boolean = false;
+
     buildArea: BuildArea = new BuildArea(this);
     animProtect: number = 0;
     invListeners: InventoryListener[] = [];
@@ -410,6 +432,7 @@ export default class Player extends PathingEntity {
     chatColour: number | null = null;
     chatEffect: number | null = null;
     chatRights: number | null = null;
+    npcId: number = -1;
 
     constructor(username: string, username37: bigint, hash64: bigint) {
         super(
@@ -419,8 +442,9 @@ export default class Player extends PathingEntity {
             1,
             1,
             EntityLifeCycle.FOREVER,
+            MoveRestrict.NORMAL,
             BlockWalk.NPC,
-            Environment.node.clientRoutefinder ? MoveStrategy.NAIVE : MoveStrategy.SMART,
+            MoveStrategy.SMART,
             PlayerInfoProt.FACE_COORD,
             PlayerInfoProt.FACE_ENTITY
         );
@@ -450,7 +474,6 @@ export default class Player extends PathingEntity {
         this.slot = -1;
         this.uid = -1;
         this.activeScript = null;
-        this.resumeButtons = [];
         this.invListeners.length = 0;
         this.resumeButtons.length = 0;
         this.queue.clear();
@@ -498,12 +521,19 @@ export default class Player extends PathingEntity {
         // - runenergy
         // - reset anims
         // - social
+        if (!Player.isInstanceX(this.x)) {
+            this.previousOverworldX = this.x;
+            this.previousOverworldZ = this.z;
+            this.previousOverworldLevel = this.level;
+            this.hasPreviousOverworldTile = true;
+        }
 
         this.buildArea.rebuildNormal();
+        this.queueZoneTransitionTriggers(this.x, this.z, this.level, true);
         this.write(new ChatFilterSettings(this.publicChat, this.privateChat, this.tradeDuel));
 
         // todo: exact order
-        if (Environment.friend.enabled) {
+        if (Environment.FRIEND_SERVER) {
             this.write(new FriendlistLoaded(1));
         } else {
             this.write(new FriendlistLoaded(2));
@@ -530,6 +560,52 @@ export default class Player extends PathingEntity {
         this.lastStepX = this.x - 1;
         this.lastStepZ = this.z;
         this.isActive = true;
+    }
+
+    protected override onTileUpdated(previousX: number, previousZ: number, previousLevel: number): void {
+        this.queueZoneTransitionTriggers(previousX, previousZ, previousLevel, false);
+    }
+
+    private queueZoneTransitionTriggers(previousX: number, previousZ: number, previousLevel: number, initialLogin: boolean): void {
+        const previousZoneX = (previousX >> 3) << 3;
+        const previousZoneZ = (previousZ >> 3) << 3;
+        const currentZoneX = (this.x >> 3) << 3;
+        const currentZoneZ = (this.z >> 3) << 3;
+
+        const previousMapZoneX = (previousZoneX >> 6) << 6;
+        const previousMapZoneZ = (previousZoneZ >> 6) << 6;
+        const currentMapZoneX = (currentZoneX >> 6) << 6;
+        const currentMapZoneZ = (currentZoneZ >> 6) << 6;
+
+        const mapZoneBoundaryChanged: boolean = initialLogin || (previousX >> 6) << 6 !== (this.x >> 6) << 6 || (previousZ >> 6) << 6 !== (this.z >> 6) << 6;
+        const mapZoneChanged: boolean = initialLogin || (mapZoneBoundaryChanged && (previousMapZoneX !== currentMapZoneX || previousMapZoneZ !== currentMapZoneZ));
+        if (mapZoneChanged) {
+            if (!initialLogin) {
+                this.triggerMapzoneExit(previousMapZoneX, previousMapZoneZ);
+            }
+            this.triggerMapzone(currentMapZoneX, currentMapZoneZ);
+            this.lastMapZone = CoordGrid.packCoord(0, currentMapZoneX, currentMapZoneZ);
+        }
+
+        const zoneChanged: boolean = initialLogin || previousLevel !== this.level || previousZoneX !== currentZoneX || previousZoneZ !== currentZoneZ;
+        if (zoneChanged) {
+            this.buildArea.rebuildZones();
+
+            if (!initialLogin) {
+                const previousZoneCoord = CoordGrid.packCoord(previousLevel, previousZoneX, previousZoneZ);
+                const currentZoneCoord = CoordGrid.packCoord(this.level, currentZoneX, currentZoneZ);
+                const lastWasMulti = World.gameMap.isMulti(previousZoneCoord);
+                const nowIsMulti = World.gameMap.isMulti(currentZoneCoord);
+                if (lastWasMulti !== nowIsMulti) {
+                    this.write(new SetMultiway(nowIsMulti));
+                }
+
+                this.triggerZoneExit(previousLevel, previousZoneX, previousZoneZ);
+            }
+
+            this.triggerZone(this.level, currentZoneX, currentZoneZ);
+            this.lastZone = CoordGrid.packCoord(this.level, currentZoneX, currentZoneZ);
+        }
     }
 
     onReconnect() {
@@ -774,7 +850,6 @@ export default class Player extends PathingEntity {
         // close any input dialogue suspended scripts.
         if (this.activeScript?.execution === ScriptState.COUNTDIALOG || this.activeScript?.execution === ScriptState.PAUSEBUTTON) {
             this.activeScript = null;
-            this.resumeButtons = [];
         }
 
         // close any main viewport interface
@@ -1056,7 +1131,7 @@ export default class Player extends PathingEntity {
             return;
         }
 
-        if (this.isLastWaypoint() && (this.targetOp === ServerTriggerType.APPLAYER3 || this.targetOp === ServerTriggerType.OPPLAYER3)) {
+        if (this.isLastOrNoWaypoint() && (this.targetOp === ServerTriggerType.APPLAYER3 || this.targetOp === ServerTriggerType.OPPLAYER3)) {
             this.queueWaypoint(this.target.followX, this.target.followZ);
             return;
         }
@@ -1065,39 +1140,12 @@ export default class Player extends PathingEntity {
             return;
         }
 
-        // Different mechanics for naive and smart paths
-        if (this.moveStrategy === MoveStrategy.NAIVE) {
-            // This logic is redundant with some stuff in pathToTarget and findNaivePath,
-            // But for maintainability it's nice to split it out... It's pretty hard to match correct mechanics
-            const underTarget = CoordGrid.intersects(this.x, this.z, this.width, this.length, this.target.x, this.target.z, this.target.width, this.target.length);
-            if (underTarget) {
-                this.randomWalk();
-                return;
-            }
-
-            if (this.isLastWaypoint() && this.allowRepath === AllowRepath.BEFOREDEST) {
-                this.naivePathToTarget();
-            }
-        } else if (this.isLastWaypoint()) {
-            this.pathToTarget();
-        }
-    }
-
-    naivePathToTarget() {
-        if (!this.target) {
+        if (Environment.NODE_CLIENT_ROUTEFINDER && CoordGrid.intersects(this.x, this.z, this.width, this.length, this.target.x, this.target.z, this.target.width, this.target.length)) {
+            this.queueWaypoints(findNaivePath(this.level, this.x, this.z, this.target.x, this.target.z, this.width, this.length, this.target.width, this.target.length, 0, CollisionType.NORMAL));
             return;
         }
-        let angle = 0;
-        if (this.target instanceof Loc) {
-            angle = this.target.angle;
-        }
-
-        const { x, z } = CoordGrid.unpackCoord(this.waypoints[0]);
-
-        // If no waypoint, or waypoint is further than 1 tile from target, set new dest
-        if (this.waypointIndex === -1 || Math.abs(this.target.x - x) > 1 || Math.abs(this.target.z - z) > 1) {
-            const waypoints = findNaivePath(this.level, this.x, this.z, this.target.x, this.target.z, this.width, this.length, this.target.width, this.target.length, angle, CollisionType.NORMAL);
-            this.queueWaypoints(waypoints);
+        if (this.isLastOrNoWaypoint()) {
+            this.pathToTarget();
         }
     }
 
@@ -1120,7 +1168,7 @@ export default class Player extends PathingEntity {
         const opTrigger = this.getOpTrigger();
         const apTrigger = this.getApTrigger();
 
-        if (!Environment.node.production && !opTrigger && !apTrigger) {
+        if (!Environment.NODE_PRODUCTION && !opTrigger && !apTrigger) {
             let debugname = '_';
             if (this.target instanceof Npc) {
                 const type = NpcType.get(this.target.type);
@@ -1262,7 +1310,8 @@ export default class Player extends PathingEntity {
                 return;
             }
 
-            if (Environment.node.clientRoutefinder && !followOp) {
+            // Run the optrigger, but applayer3 should not run this
+            if (!followOp) {
                 this.processWalktrigger();
             }
 
@@ -1285,12 +1334,13 @@ export default class Player extends PathingEntity {
             }
 
             this.updateMovement();
+
             // If there's a target and p_access is available, try to interact after moving
             if (this.target && this.canAccess() && !followOp) {
                 interacted = this.tryInteract(this.stepsTaken === 0);
 
                 // If Player did not interact, has no path, and did not move this cycle, terminate the interaction
-                if (!interacted && !this.apRangeCalled && !this.hasWaypoints() && this.stepsTaken === 0) {
+                if (!interacted && !this.hasWaypoints() && this.stepsTaken === 0) {
                     this.messageGame("I can't reach that!");
                     this.clearInteraction();
                 }
@@ -1356,9 +1406,8 @@ export default class Player extends PathingEntity {
         const stream = Packet.alloc(0);
 
         stream.p1(this.gender);
-        stream.p1(this.headicons);
-
-        // todo: transmog support - write first "slot" with -1, followed by npc ID
+        stream.p1(0xff); // prayer icon?
+        stream.p1(0xff); // skull icon?
 
         const skippedSlots = [];
 
@@ -1389,6 +1438,12 @@ export default class Player extends PathingEntity {
         }
 
         for (let slot = 0; slot < 12; slot++) {
+            if (this.npcId != -1) {
+                stream.p2(-1);
+                stream.p2(this.npcId);
+                break;
+            }
+
             if (skippedSlots.indexOf(slot) !== -1) {
                 stream.p1(0);
                 continue;
@@ -1541,13 +1596,14 @@ export default class Player extends PathingEntity {
         container.removeAll();
     }
 
-    invAdd(inv: number, obj: number, count: number): number {
+    invAdd(inv: number, obj: number, count: number, assureFullInsertion: boolean = true): number {
         const container = this.getInventory(inv);
         if (!container) {
             throw new Error('invAdd: Invalid inventory type: ' + inv);
         }
 
-        return container.add(obj, count, -1);
+        const transaction = container.add(obj, count, -1, assureFullInsertion);
+        return transaction.completed;
     }
 
     invSet(inv: number, obj: number, count: number, slot: number) {
@@ -1574,7 +1630,8 @@ export default class Player extends PathingEntity {
             throw new Error('invDel: Invalid beginSlot: ' + beginSlot);
         }
 
-        return container.remove(obj, count, beginSlot);
+        const transaction = container.remove(obj, count, beginSlot);
+        return transaction.completed;
     }
 
     invDelSlot(inv: number, slot: number) {
@@ -1697,7 +1754,7 @@ export default class Player extends PathingEntity {
         this.invDelSlot(fromInv, fromSlot);
 
         return {
-            overflow: fromObj.count - this.invAdd(toInv, fromObj.id, fromObj.count),
+            overflow: fromObj.count - this.invAdd(toInv, fromObj.id, fromObj.count, false),
             fromObj: fromObj.id
         };
     }
@@ -1823,7 +1880,7 @@ export default class Player extends PathingEntity {
             return;
         }
 
-        const multi = allowMulti ? Environment.node.xpRate : 1;
+        const multi = allowMulti ? Environment.NODE_XPRATE : 1;
         this.stats[stat] += xp * multi;
 
         // cap to 200m, this is represented as "2 billion" because we use 32-bit signed integers and divide by 10 to give us a decimal point
@@ -1984,8 +2041,8 @@ export default class Player extends PathingEntity {
         this.write(new MidiSong(id));
     }
 
-    playJingle(id: number): void {
-        this.write(new MidiJingle(id, Midi.getLength(id)));
+    playJingle(id: number, delay: number): void {
+        this.write(new MidiJingle(id, delay));
     }
 
     openMainModal(com: number) {
@@ -2010,7 +2067,6 @@ export default class Player extends PathingEntity {
         // clear old suspended scripts
         if (this.activeScript?.execution === ScriptState.COUNTDIALOG || this.activeScript?.execution === ScriptState.PAUSEBUTTON) {
             this.activeScript = null;
-            this.resumeButtons = [];
         }
     }
 
@@ -2046,7 +2102,6 @@ export default class Player extends PathingEntity {
         // clear old suspended scripts
         if (this.activeScript?.execution === ScriptState.COUNTDIALOG || this.activeScript?.execution === ScriptState.PAUSEBUTTON) {
             this.activeScript = null;
-            this.resumeButtons = [];
         }
     }
 
@@ -2070,7 +2125,6 @@ export default class Player extends PathingEntity {
         // clear old suspended scripts
         if (this.activeScript?.execution === ScriptState.COUNTDIALOG || this.activeScript?.execution === ScriptState.PAUSEBUTTON) {
             this.activeScript = null;
-            this.resumeButtons = [];
         }
     }
 
@@ -2096,12 +2150,10 @@ export default class Player extends PathingEntity {
         // clear old suspended scripts
         if (this.activeScript?.execution === ScriptState.COUNTDIALOG || this.activeScript?.execution === ScriptState.PAUSEBUTTON) {
             this.activeScript = null;
-            this.resumeButtons = [];
         }
     }
 
     exactMove(startX: number, startZ: number, endX: number, endZ: number, startCycle: number, endCycle: number, direction: number) {
-        this.teleport(endX, endZ, this.level);
         this.exactStartX = startX;
         this.exactStartZ = startZ;
         this.exactEndX = endX;
@@ -2110,6 +2162,13 @@ export default class Player extends PathingEntity {
         this.exactMoveEnd = endCycle;
         this.exactMoveFacing = direction;
         this.masks |= PlayerInfoProt.EXACT_MOVE;
+
+        // todo: interpolate over time? instant teleport? verify with true tile on osrs
+        this.x = endX;
+        this.z = endZ;
+        this.lastStepX = this.x - 1;
+        this.lastStepZ = this.z;
+        this.tele = true;
     }
 
     setTab(com: number, tab: number) {
@@ -2215,7 +2274,6 @@ export default class Player extends PathingEntity {
             }
         } else if (script === this.activeScript) {
             this.activeScript = null;
-            this.resumeButtons = [];
 
             if ((this.modalState & ModalState.MAIN) === ModalState.NONE) {
                 // close chat dialogues automatically and leave main modals alone
@@ -2266,11 +2324,14 @@ export default class Player extends PathingEntity {
         const nextDate: bigint = BigInt(Date.now());
 
         const lastIp = 2130706433; // 127.0.0.1
-        const daysSinceLogin: number = (Number(nextDate - lastDate) / (1000 * 60 * 60 * 24)) | 0;
+        const daysSinceLogin: number = (Number(lastDate) / (1000 * 60 * 60 * 24)) | 0;
+        const daysSincePasswordChanged = 201; // hide :)
         const daysSinceRecoveriesChanged = 201; // hide :)
-        const warnMembersInNonMembers: boolean = !Environment.node.members && this.members;
+        const currentDay: number = (Number(nextDate) / (1000 * 60 * 60 * 24)) | 0;
+        const unreadMessageCount = 0;
+        const membersCreditDays = 365;
 
-        this.write(new LastLoginInfo(lastIp, daysSinceLogin, daysSinceRecoveriesChanged, this.messageCount, warnMembersInNonMembers));
+        this.write(new LastLoginInfo(lastIp, currentDay, daysSinceLogin, daysSincePasswordChanged, daysSinceRecoveriesChanged, unreadMessageCount, membersCreditDays));
         this.lastLoginTime = nextDate;
     }
 

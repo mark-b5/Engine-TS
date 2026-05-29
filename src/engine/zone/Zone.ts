@@ -75,6 +75,10 @@ export default class Zone {
         return this.objsCount;
     }
 
+    hasPlayers(): boolean {
+        return !this.players.isEmpty();
+    }
+
     enter(entity: PathingEntity): void {
         if (entity instanceof Player) {
             this.players.addTail(entity);
@@ -306,7 +310,7 @@ export default class Zone {
         obj.lastChange = -1;
 
         // If the obj is not tradeable, or it's members in an f2p world, or it's already revealed, then skip
-        if (!objType.tradeable || (objType.members && !Environment.node.members) || obj.reveal === -1) {
+        if (!objType.tradeable || (objType.members && !Environment.NODE_MEMBERS) || obj.reveal === -1) {
             obj.reveal = -1;
             return;
         }

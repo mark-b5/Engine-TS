@@ -1,4 +1,6 @@
-import * as rsbuf from '#/network/rsbuf/index.js';
+import 'dotenv/config';
+
+import * as rsbuf from '@2004scape/rsbuf';
 
 import InvType from '#/cache/config/InvType.js';
 import { CoordGrid } from '#/engine/CoordGrid.js';
@@ -21,9 +23,7 @@ import IfOpenSide from '#/network/game/server/model/IfOpenSide.js';
 import Logout from '#/network/game/server/model/Logout.js';
 import NpcInfo from '#/network/game/server/model/NpcInfo.js';
 import PlayerInfo from '#/network/game/server/model/PlayerInfo.js';
-import SetMultiway from '#/network/game/server/model/SetMultiway.js';
 import UpdateInvFull from '#/network/game/server/model/UpdateInvFull.js';
-import UpdateInvPartial from '#/network/game/server/model/UpdateInvPartial.js';
 import UpdateRunEnergy from '#/network/game/server/model/UpdateRunEnergy.js';
 import UpdateRunWeight from '#/network/game/server/model/UpdateRunWeight.js';
 import UpdateStat from '#/network/game/server/model/UpdateStat.js';
@@ -199,6 +199,10 @@ export class NetworkPlayer extends Player {
 
         const prot = encoder.prot;
         const buf = client.out;
+        // const test = (1 + (prot.length === -1 ? 1 : prot.length === -2 ? 2 : 0)) + encoder.test(message);
+        // if (buf.pos + test >= buf.length) {
+        //     client.flush();
+        // }
 
         buf.pos = 0;
 
@@ -248,39 +252,8 @@ export class NetworkPlayer extends Player {
             info.unlink();
         }
 
-        // map zone changed
-        const mapZone = CoordGrid.packCoord(0, (this.x >> 6) << 6, (this.z >> 6) << 6);
-        if (this.lastMapZone !== mapZone) {
-            // map zone triggers
-            if (this.lastMapZone !== -1) {
-                const { x, z } = CoordGrid.unpackCoord(this.lastMapZone);
-                this.triggerMapzoneExit(x, z);
-            }
-
-            this.triggerMapzone((this.x >> 6) << 6, (this.z >> 6) << 6);
-            this.lastMapZone = mapZone;
-        }
-
-        // zone changed
-        const zone = CoordGrid.packCoord(this.level, (this.x >> 3) << 3, (this.z >> 3) << 3);
-        if (this.lastZone !== zone) {
-            this.buildArea.rebuildZones();
-
-            // zone triggers
-            const lastWasMulti = World.gameMap.isMulti(this.lastZone);
-            const nowIsMulti = World.gameMap.isMulti(zone);
-            if (lastWasMulti != nowIsMulti) {
-                this.write(new SetMultiway(nowIsMulti));
-            }
-
-            if (this.lastZone !== -1) {
-                const { level, x, z } = CoordGrid.unpackCoord(this.lastZone);
-                this.triggerZoneExit(level, x, z);
-            }
-
-            this.triggerZone(this.level, (this.x >> 3) << 3, (this.z >> 3) << 3);
-            this.lastZone = zone;
-        }
+        // map/zone transition triggers are now queued from tile updates
+        // (movement/teleport/login path), not from client-out update.
     }
 
     updatePlayers() {
@@ -304,7 +277,10 @@ export class NetworkPlayer extends Player {
 
         // update active zones
         for (const zoneIndex of activeZones) {
-            const zone: Zone = World.gameMap.getZoneIndex(zoneIndex);
+            const zone: Zone | null = World.gameMap.getZoneIndexIfExists(zoneIndex);
+            if (!zone) {
+                continue;
+            }
             if (!loadedZones.has(zone.index)) {
                 zone.writeFullFollows(this);
             }
@@ -329,6 +305,7 @@ export class NetworkPlayer extends Player {
         }
     }
 
+    // todo: partial updates
     updateInvs() {
         let runWeightChanged = false;
         let firstSeen = false;
@@ -339,8 +316,6 @@ export class NetworkPlayer extends Player {
                 continue;
             }
 
-            const needsFullUpdate = listener.firstSeen;
-
             if (listener.source === -1) {
                 // world inventory
                 const inv = World.getInventory(listener.type);
@@ -348,11 +323,9 @@ export class NetworkPlayer extends Player {
                     continue;
                 }
 
-                if (needsFullUpdate) {
+                if (inv.update || listener.firstSeen) {
                     this.write(new UpdateInvFull(listener.com, inv));
                     listener.firstSeen = false;
-                } else if (inv.update) {
-                    this.write(new UpdateInvPartial(listener.com, inv, ...inv.getDirtySlots()));
                 }
             } else {
                 // player inventory
@@ -366,15 +339,13 @@ export class NetworkPlayer extends Player {
                     continue;
                 }
 
-                if (needsFullUpdate) {
+                if (inv.update || listener.firstSeen) {
                     this.write(new UpdateInvFull(listener.com, inv));
-                    firstSeen = true; // ensure weight is sent between logins
+                    if (listener.firstSeen) {
+                        firstSeen = true;
+                    }
                     listener.firstSeen = false;
-                } else if (inv.update) {
-                    this.write(new UpdateInvPartial(listener.com, inv, ...inv.getDirtySlots()));
-                }
 
-                if (inv.update || needsFullUpdate) {
                     const invType = InvType.get(listener.type);
                     if (invType.runweight) {
                         runWeightChanged = true;
