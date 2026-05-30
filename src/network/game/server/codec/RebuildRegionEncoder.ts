@@ -7,12 +7,11 @@ export default class RebuildRegionEncoder extends ServerGameMessageEncoder<Rebui
     prot = ServerGameProt.REBUILD_REGION;
 
     encode(buf: Packet, message: RebuildRegion): void {
-        // 377 packet 53 decode order:
-        // 1) zoneX (g2_alt2)
-        // 2) bit access: 4*13*13 flags + optional 26-bit templates
-        // 3) zoneZ (g2_alt2) after accessBytes
-        // No per-mapsquare key blocks are read by this client.
-        buf.p2_alt2(message.zoneX);
+        // 274 client REBUILD_REGION decode order (opcode 53, variable-length):
+        // 1) zoneX  (g2)
+        // 2) gBitStart: 4*13*13 flags + optional 26-bit templates, gBitEnd
+        // 3) zoneZ  (g2)
+        buf.p2(message.zoneX);
 
         const templateByZone = new Map<number, number>();
         for (const template of message.templates) {
@@ -41,6 +40,6 @@ export default class RebuildRegionEncoder extends ServerGameMessageEncoder<Rebui
 
         buf.bitEnd();
 
-        buf.p2_alt2(message.zoneZ);
+        buf.p2(message.zoneZ);
     }
 }

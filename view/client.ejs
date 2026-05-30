@@ -145,6 +145,7 @@
 
         function hideControls() {
             document.getElementById('controls').style.display = 'none';
+            document.getElementById('fkey-panel').style.display = 'none';
             document.getElementById('hide-message').style.display = '';
 
             countDown = 0;
@@ -254,6 +255,110 @@
             }
             canvas.style.imageRendering = filterSelect;
         }
+
+        const SIDEBAR_ICONS = ['Combat', 'Stats', 'Quest', 'Inventory', 'Equipment', 'Prayer', 'Magic', 'Friends', 'Ignore', 'Logout', 'Options', 'Emotes', 'Music', 'Tab 14', 'Tab 15'];
+
+        function toggleTrueTile() {
+            const cur = localStorage.getItem('showLocalTrueTile') !== 'false';
+            const next = !cur;
+            localStorage.setItem('showLocalTrueTile', String(next));
+            const link = document.getElementById('trueTileLink');
+            link.textContent = 'True tile: ' + (next ? 'on' : 'off');
+            link.style.color = next ? '' : '#888888';
+            if (window.gameClient) window.gameClient.setOverlaySettings({ showLocalTrueTile: next });
+        }
+
+        function toggleHoveredTile() {
+            const cur = localStorage.getItem('showHoveredTrueTile') !== 'false';
+            const next = !cur;
+            localStorage.setItem('showHoveredTrueTile', String(next));
+            const link = document.getElementById('hoveredTileLink');
+            link.textContent = 'Hover tile: ' + (next ? 'on' : 'off');
+            link.style.color = next ? '' : '#888888';
+            if (window.gameClient) window.gameClient.setOverlaySettings({ showHoveredTrueTile: next });
+        }
+
+        function togglePriorityOutline() {
+            const cur = localStorage.getItem('showPriorityOutline') !== 'false';
+            const next = !cur;
+            localStorage.setItem('showPriorityOutline', String(next));
+            const link = document.getElementById('priorityOutlineLink');
+            link.textContent = 'Priority: ' + (next ? 'on' : 'off');
+            link.style.color = next ? '' : '#888888';
+            if (window.gameClient) window.gameClient.setOverlaySettings({ showPriorityOutline: next });
+        }
+
+        function toggleFkeyPanel() {
+            const panel = document.getElementById('fkey-panel');
+            panel.style.display = panel.style.display === 'none' ? '' : 'none';
+        }
+
+        function buildFkeyOptions() {
+            let html = '<option value="-1">None</option>';
+            for (let i = 0; i < SIDEBAR_ICONS.length; i++) {
+                html += '<option value="' + i + '">' + SIDEBAR_ICONS[i] + '</option>';
+            }
+            for (let f = 1; f <= 9; f++) {
+                document.getElementById('fkey' + f).innerHTML = html;
+            }
+        }
+
+        function saveFKeys() {
+            const bindings = new Array(SIDEBAR_ICONS.length).fill(0);
+            for (let fkey = 1; fkey <= 9; fkey++) {
+                const iconIdx = parseInt(document.getElementById('fkey' + fkey).value, 10);
+                if (iconIdx >= 0 && iconIdx < bindings.length) {
+                    bindings[iconIdx] = fkey;
+                }
+            }
+            localStorage.setItem('fkeyBindings', JSON.stringify(bindings));
+            if (window.gameClient) window.gameClient.applyFKeyBindings(bindings);
+        }
+
+        function loadOverlaySettings() {
+            const showLocal = localStorage.getItem('showLocalTrueTile') !== 'false';
+            const showHovered = localStorage.getItem('showHoveredTrueTile') !== 'false';
+            const showPriority = localStorage.getItem('showPriorityOutline') !== 'false';
+
+            const trueTileLink = document.getElementById('trueTileLink');
+            trueTileLink.textContent = 'True tile: ' + (showLocal ? 'on' : 'off');
+            trueTileLink.style.color = showLocal ? '' : '#888888';
+
+            const hoveredTileLink = document.getElementById('hoveredTileLink');
+            hoveredTileLink.textContent = 'Hover tile: ' + (showHovered ? 'on' : 'off');
+            hoveredTileLink.style.color = showHovered ? '' : '#888888';
+
+            const priorityOutlineLink = document.getElementById('priorityOutlineLink');
+            priorityOutlineLink.textContent = 'Priority: ' + (showPriority ? 'on' : 'off');
+            priorityOutlineLink.style.color = showPriority ? '' : '#888888';
+
+            if (window.gameClient) {
+                window.gameClient.setOverlaySettings({
+                    showLocalTrueTile: showLocal,
+                    showHoveredTrueTile: showHovered,
+                    showPriorityOutline: showPriority
+                });
+            }
+        }
+
+        function loadFKeySettings() {
+            buildFkeyOptions();
+            const saved = localStorage.getItem('fkeyBindings');
+            const bindings = saved ? JSON.parse(saved) : new Array(SIDEBAR_ICONS.length).fill(0);
+
+            for (let fkey = 1; fkey <= 9; fkey++) {
+                document.getElementById('fkey' + fkey).value = '-1';
+            }
+            for (let icon = 0; icon < bindings.length; icon++) {
+                const fkey = bindings[icon];
+                if (fkey >= 1 && fkey <= 9) {
+                    const sel = document.getElementById('fkey' + fkey);
+                    if (sel) sel.value = String(icon);
+                }
+            }
+
+            if (window.gameClient) window.gameClient.applyFKeyBindings(bindings);
+        }
     </script>
 </head>
 
@@ -291,7 +396,36 @@
             </span>
             <a class="green" href="#" id="fullscreen" onclick="toggleFullscreen();">Go Fullscreen</a> |
             <a class="green" href="#" id="screenshot" onclick="saveScreenshot();">Take screenshot</a> |
+            <a class="green" href="#" id="trueTileLink" onclick="toggleTrueTile(); return false;">True tile: on</a> |
+            <a class="green" href="#" id="hoveredTileLink" onclick="toggleHoveredTile(); return false;">Hover tile: on</a> |
+            <a class="green" href="#" id="priorityOutlineLink" onclick="togglePriorityOutline(); return false;">Priority: on</a> |
+            <a class="green" href="#" onclick="toggleFkeyPanel(); return false;">FKeys ▾</a> |
             <a class="green" href="#" id="hide" onclick="hideControls();">Hide controls</a>
+        </div>
+        <div class="centered" id="fkey-panel" style="display: none; margin-top: 3px; margin-bottom: 5px;">
+            <table>
+                <tr>
+                    <td>F1:</td><td><select id="fkey1" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F4:</td><td><select id="fkey4" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F7:</td><td><select id="fkey7" onchange="saveFKeys();"></select></td>
+                </tr>
+                <tr>
+                    <td>F2:</td><td><select id="fkey2" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F5:</td><td><select id="fkey5" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F8:</td><td><select id="fkey8" onchange="saveFKeys();"></select></td>
+                </tr>
+                <tr>
+                    <td>F3:</td><td><select id="fkey3" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F6:</td><td><select id="fkey6" onchange="saveFKeys();"></select></td>
+                    <td>&nbsp;&nbsp;</td>
+                    <td>F9:</td><td><select id="fkey9" onchange="saveFKeys();"></select></td>
+                </tr>
+            </table>
         </div>
         <div id="hide-message" style="display: none;">
             <p class="green blink">Controls have been hidden press ctrl+alt+i to unhide.</p>
@@ -318,11 +452,10 @@
     <script type="module">
         import { Client } from './client/client.js';
 
-        (() => {
-            new Client(<%= nodeid %>, <%= lowmem %>, <%= members %>);
-        })();
-
+        window.gameClient = new Client(<%= nodeid %>, <%= lowmem %>, <%= members %>);
         loadSettings();
+        loadOverlaySettings();
+        loadFKeySettings();
     </script>
 </body>
 
