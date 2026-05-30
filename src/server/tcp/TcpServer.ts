@@ -9,12 +9,27 @@ import OnDemand from '#/engine/OnDemand.js';
 
 export default class TcpServer {
     tcp: net.Server;
+    private retriedPort: boolean = false;
 
     constructor() {
         this.tcp = net.createServer();
     }
 
     start() {
+        this.tcp.on('error', (err: NodeJS.ErrnoException) => {
+            if (err?.code === 'EADDRINUSE' && !this.retriedPort) {
+                this.retriedPort = true;
+                const currentPort = Environment.node.port;
+                const fallbackPort = currentPort + 1;
+                console.warn(`[tcp] Port ${currentPort} in use, falling back to ${fallbackPort}`);
+                Environment.node.port = fallbackPort;
+                this.tcp.listen(fallbackPort, '0.0.0.0', () => {});
+                return;
+            }
+
+            throw err;
+        });
+
         this.tcp.on('connection', (s: net.Socket) => {
             s.setTimeout(30000);
             s.setNoDelay(true);

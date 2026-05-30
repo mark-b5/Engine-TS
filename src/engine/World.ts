@@ -52,6 +52,7 @@ import { PlayerStat } from '#/engine/entity/PlayerStat.js';
 import { SessionLog } from '#/engine/entity/tracking/SessionLog.js';
 import { WealthTransactionEvent, WealthEvent } from '#/engine/entity/tracking/WealthEvent.js';
 import GameMap, { changeLocCollision, changeNpcCollision, changePlayerCollision } from '#/engine/GameMap.js';
+import InstanceController from '#/engine/InstanceController.js';
 import { Inventory } from '#/engine/Inventory.js';
 import ScriptPointer from '#/engine/script/ScriptPointer.js';
 import ScriptProvider from '#/engine/script/ScriptProvider.js';
@@ -92,15 +93,15 @@ import {
 import Environment from '#/util/Environment.js';
 import { fromBase37, toBase37, toSafeName } from '#/util/JString.js';
 import LinkList from '#/datastruct/LinkList.js';
-import { printDebug, printError, printInfo } from '#/util/Logger.js';
+import { printDebug, printError, printInfo, printWarning } from '#/util/Logger.js';
+import { WalkTriggerSetting } from '#/engine/entity/WalkTriggerSetting.js';
+
 import OnDemand from './OnDemand.js';
-import { createRuntimeWorker } from '#/util/RuntimeWorker.js';
 import { ObjDelayedRequest } from './entity/ObjDelayedRequest.js';
 import DbTableIndex from '#/cache/config/DbTableIndex.js';
 import VarBitType from '#/cache/config/VarBitType.js';
 import FriendlistLoaded from '#/network/game/server/model/FriendlistLoaded.js';
 import HashTable from '#/datastruct/HashTable.js';
-import Midi from '#/cache/midi/Midi.js';
 
 const priv = forge.pki.privateKeyFromPem(fs.readFileSync('data/config/private.pem', 'ascii'));
 
@@ -110,13 +111,13 @@ type LogoutRequest = {
 };
 
 class World {
-    private loginThread = createRuntimeWorker(new URL('../server/login/LoginThread.ts', import.meta.url));
-    private friendThread = createRuntimeWorker(new URL('../server/friend/FriendThread.ts', import.meta.url));
-    private loggerThread = createRuntimeWorker(new URL('../server/logger/LoggerThread.ts', import.meta.url));
+    private loginThread = new Worker('./src/server/login/LoginThread.ts');
+    private friendThread = new Worker('./src/server/friend/FriendThread.ts');
+    private loggerThread = new Worker('./src/server/logger/LoggerThread.ts');
     private devThread: Worker | null = null;
 
-    private static readonly PLAYERS: number = 2047;
-    private static readonly NPCS: number = Environment.runtime.maxNpcs;
+    private static readonly PLAYERS: number = Environment.NODE_MAX_PLAYERS;
+    private static readonly NPCS: number = Environment.NODE_MAX_NPCS;
 
     private static readonly TICKRATE: number = 600; // ms (0.6s) - DO NOT CHANGE. This is only exposed for condensing time while testing long-running operations.
 
@@ -129,11 +130,14 @@ class World {
     private static readonly AFK_CHANCE1: number = 1 / (120 / 5); // 1/24 - 4% chance every 5 mins: avg 1 event every 2 hrs
     private static readonly AFK_CHANCE2: number = 1 / (60 / 5); // 1/12 - 8% chance every 5 mins: avg 1 event every 1 hr while "aggro zone" hasn't changed
 
-    private static readonly TIMEOUT_NO_CONNECTION: number = 50; // 30s with no connection (16 ticks in osrs)
-    private static readonly TIMEOUT_NO_RESPONSE: number = 100; // 60s without any response
+    private static readonly TIMEOUT_NO_CONNECTION: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 50; // 30s with no connection (16 ticks in osrs)
+    private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s without any response
 
     // the game/zones map
-    readonly gameMap: GameMap = new GameMap(Environment.node.members);
+    readonly gameMap: GameMap = new GameMap(Environment.NODE_MEMBERS);
+
+    // instance management
+    readonly instances: InstanceController = new InstanceController();
 
     // shared inventories (shops)
     readonly invs: Set<Inventory> = new Set();
@@ -205,8 +209,6 @@ class World {
     }
 
     reload(clearInvs: boolean = true): void {
-        OnDemand.reloadCache();
-
         VarPlayerType.load('data/pack');
         VarBitType.load('data/pack');
         ParamType.load('data/pack');
@@ -273,7 +275,7 @@ class World {
         Component.load('data/pack');
 
         const count = ScriptProvider.load('data/pack');
-        if (Environment.node.debug) {
+        if (Environment.NODE_DEBUG) {
             if (count === -1) {
                 this.broadcastMes('There was an issue while reloading scripts.');
             } else {
@@ -296,7 +298,6 @@ class World {
 
         FontType.load('data/pack');
         WordEnc.load('data/pack');
-        Midi.load();
 
         this.reload();
 
@@ -314,18 +315,18 @@ class World {
             });
         }, 2000);
 
-        if (!Environment.node.production && Environment.build.liveReload) {
+        if (!Environment.NODE_PRODUCTION) {
             this.createDevThread();
 
-            if (Environment.build.startup) {
+            if (Environment.BUILD_STARTUP) {
                 this.rebuild();
             }
         }
 
-        if (Environment.web.port === 80) {
+        if (Environment.WEB_PORT === 80) {
             printInfo(kleur.green().bold('World ready') + kleur.white().bold(': Visit http://localhost/rs2.cgi'));
         } else {
-            printInfo(kleur.green().bold('World ready') + kleur.white().bold(': Visit http://localhost:' + Environment.web.port + '/rs2.cgi'));
+            printInfo(kleur.green().bold('World ready') + kleur.white().bold(': Visit http://localhost:' + Environment.WEB_PORT + '/rs2.cgi'));
         }
 
         if (startCycle) {
@@ -475,7 +476,7 @@ class World {
             this.lastCycleStats[WorldStat.BANDWIDTH_OUT] = this.cycleStats[WorldStat.BANDWIDTH_OUT];
 
             // push stats to prometheus
-            if (Environment.node.production) {
+            if (Environment.NODE_PRODUCTION) {
                 trackPlayerCount.set(this.getTotalPlayers());
                 trackNpcCount.set(this.getTotalNpcs());
 
@@ -493,7 +494,7 @@ class World {
                 trackCycleBandwidthOutBytes.inc(this.cycleStats[WorldStat.BANDWIDTH_OUT]);
             }
 
-            if (Environment.node.debugProfile) {
+            if (Environment.NODE_DEBUG_PROFILE) {
                 printInfo(`tick ${this.currentTick}: ${this.cycleStats[WorldStat.CYCLE]}/${this.tickRate} ms, ${Math.trunc(process.memoryUsage().heapTotal / 1024 / 1024)} MB heap`);
                 printDebug(`${this.getTotalPlayers()}/${World.PLAYERS} players | ${this.getTotalNpcs()}/${World.NPCS} npcs | ${this.gameMap.getTotalZones()} zones | ${this.gameMap.getTotalLocs()} locs | ${this.gameMap.getTotalObjs()} objs`);
                 printDebug(
@@ -528,6 +529,7 @@ class World {
     }
 
     // - world queue
+    // - npc spawn scripts
     // - npc hunt
     private processWorld(): void {
         const start: number = Date.now();
@@ -574,19 +576,17 @@ class World {
                 console.error(err);
             }
         }
-
+        // - npc ai_spawn scripts
         // - npc hunt players if not busy
-        if (this.getTotalPlayers() > 0) {
-            for (const npc of this.npcs) {
-                // Check if npc is alive
-                if (npc.isActive) {
-                    // Hunts will process even if the npc is delayed during this portion
-                    if (npc.huntMode !== -1 && rsbuf.getNpcObservers(npc.nid) > 0) {
-                        const hunt = HuntType.get(npc.huntMode);
+        for (const npc of this.npcs) {
+            // Check if npc is alive
+            if (npc.isActive) {
+                // Hunts will process even if the npc is delayed during this portion
+                if (npc.huntMode !== -1 && rsbuf.getNpcObservers(npc.nid) > 0) {
+                    const hunt = HuntType.get(npc.huntMode);
 
-                        if (hunt && hunt.type === HuntModeType.PLAYER) {
-                            npc.huntAll(hunt);
-                        }
+                    if (hunt && hunt.type === HuntModeType.PLAYER) {
+                        npc.huntAll(hunt);
                     }
                 }
             }
@@ -616,16 +616,35 @@ class World {
                 player.processInputTracking();
 
                 if (isClientConnected(player) && player.decodeIn()) {
+                    const followingPlayer = player.targetOp === ServerTriggerType.APPLAYER3 || player.targetOp === ServerTriggerType.OPPLAYER3;
                     if (player.userPath.length > 0 || player.opcalled) {
                         if (player.delayed) {
                             player.unsetMapFlag();
                             continue;
                         }
 
+                        if ((!player.target || player.target instanceof Loc || player.target instanceof Obj) && player.faceEntity !== -1) {
+                            player.faceEntity = -1;
+                            player.masks |= player.entitymask;
+                        }
+
                         if (!player.busy() && player.opcalled) {
                             player.moveClickRequest = false;
                         } else {
                             player.moveClickRequest = true;
+                        }
+
+                        if (!followingPlayer && player.opcalled && (player.userPath.length === 0 || !Environment.NODE_CLIENT_ROUTEFINDER)) {
+                            player.pathToTarget();
+                            continue;
+                        }
+
+                        if (Environment.NODE_WALKTRIGGER_SETTING !== WalkTriggerSetting.PLAYERPACKET) {
+                            player.pathToMoveClick(player.userPath, !Environment.NODE_CLIENT_ROUTEFINDER);
+
+                            if (Environment.NODE_WALKTRIGGER_SETTING === WalkTriggerSetting.PLAYERSETUP && !player.opcalled && player.hasWaypoints()) {
+                                player.processWalktrigger();
+                            }
                         }
                     }
                 }
@@ -649,6 +668,11 @@ class World {
     private processNpcEventQueue(): void {
         for (const request of this.npcEventQueue.all()) {
             const npc = request.npc;
+            if (request.type === NpcEventType.SPAWN && (!npc.isActive || npc.nid === -1 || this.getNpc(npc.nid) !== npc)) {
+                request.unlink();
+                continue;
+            }
+
             if (!npc.delayed) {
                 request.unlink();
                 const state = ScriptRunner.init(request.script, npc);
@@ -708,8 +732,6 @@ class World {
                 }
                 // - engine queue
                 player.processEngineQueue();
-                // Update target facing
-                player.setFaceEntity();
                 // - interactions
                 // - movement
                 player.processInteraction();
@@ -825,7 +847,7 @@ class World {
                     }
 
                     if (isClientConnected(other)) {
-                        player.addSessionLog(LoggerEventType.MODERATOR, 'Logged to world ' + Environment.node.id + ' replacing session', other.client.uuid);
+                        player.addSessionLog(LoggerEventType.MODERATOR, 'Logged to world ' + Environment.NODE_ID + ' replacing session', other.client.uuid);
                         other.client.close();
                     }
 
@@ -927,7 +949,35 @@ class World {
             player.tele = true;
             player.moveClickRequest = false;
 
-            this.gameMap.getZone(player.x, player.z, player.level).enter(player);
+            const loginInstance = this.instances.findInstanceByTile(player.level, player.x, player.z);
+            if (loginInstance) {
+                const exitCoord = loginInstance.exitCoord;
+                const hasValidExit = exitCoord && this.gameMap.hasZone(exitCoord.x, exitCoord.z, exitCoord.level);
+
+                if (hasValidExit && exitCoord) {
+                    printWarning(`[World] Player login: player ${player.username} was in an instance, moving to exit at (${exitCoord.x}, ${exitCoord.z}, L${exitCoord.level})`);
+                    player.x = exitCoord.x;
+                    player.z = exitCoord.z;
+                    player.level = exitCoord.level;
+                } else {
+                    printWarning(`[World] Player login: player ${player.username} was in an instance with invalid exit, teleporting to Lumbridge failsafe`);
+                    player.x = 3222;
+                    player.z = 3222;
+                    player.level = 0;
+                }
+            }
+
+            const zone = this.gameMap.getZoneIfExists(player.x, player.z, player.level);
+            if (zone) {
+                zone.enter(player);
+            } else {
+                printWarning(`[World] Player login: zone does not exist at (${player.x}, ${player.z}, L${player.level}), teleporting to default spawn`);
+                player.x = 3222;
+                player.z = 3222;
+                player.level = 0;
+                const defaultZone = this.gameMap.getZone(player.x, player.z, player.level);
+                defaultZone.enter(player);
+            }
             player.onLogin();
 
             if (this.shutdownTick != -1) {
@@ -979,10 +1029,6 @@ class World {
     // - convert npc movements
     // - compute npc info
     private processInfo(): void {
-        if (this.getTotalPlayers() === 0) {
-            return;
-        }
-
         // TODO: benchmark this?
         for (const player of this.playerLoop.all()) {
             player.reorient();
@@ -1141,7 +1187,7 @@ class World {
                     continue;
                 }
 
-                inv.resetTracking();
+                inv.update = false;
             }
         }
 
@@ -1152,7 +1198,7 @@ class World {
 
         // - reset invs (world)
         for (const inv of this.invs) {
-            inv.resetTracking();
+            inv.update = false;
 
             // Increase or Decrease shop stock
             const invType = InvType.get(inv.type);
@@ -1168,13 +1214,13 @@ class World {
                 }
                 // Item stock is under min
                 if (item.count < invType.stockcount[index] && tick % invType.stockrate[index] === 0) {
-                    inv.add(item.id, 1, index);
+                    inv.add(item.id, 1, index, true, false, false);
                     inv.update = true;
                     continue;
                 }
                 // Item stock is over min
                 if (item.count > invType.stockcount[index] && tick % invType.stockrate[index] === 0) {
-                    inv.remove(item.id, 1, index);
+                    inv.remove(item.id, 1, index, true);
                     inv.update = true;
                     continue;
                 }
@@ -1182,7 +1228,7 @@ class World {
                 // Item stock is not listed, such as general stores
                 // Tested on low and high player count worlds, ever 1 minute stock decreases.
                 if (invType.allstock && !invType.stockcount[index] && tick % World.INV_STOCKRATE === 0) {
-                    inv.remove(item.id, 1, index);
+                    inv.remove(item.id, 1, index, true);
                     inv.update = true;
                 }
             }
@@ -1263,18 +1309,15 @@ class World {
         npc.z = npc.startZ;
         npc.isActive = true;
 
-        const zone = this.gameMap.getZone(npc.x, npc.z, npc.level);
-        zone.enter(npc);
+        // During initialization, zones can auto-create. After init, zones must be pre-created.
+        const zone = this.gameMap.isInitializing() ? this.gameMap.getZone(npc.x, npc.z, npc.level) : this.gameMap.getZoneIfExists(npc.x, npc.z, npc.level);
 
-        switch (npc.blockWalk) {
-            case BlockWalk.NPC:
-                changeNpcCollision(npc.width, npc.x, npc.z, npc.level, true);
-                break;
-            case BlockWalk.ALL:
-                changeNpcCollision(npc.width, npc.x, npc.z, npc.level, true);
-                changePlayerCollision(npc.width, npc.x, npc.z, npc.level, true);
-                break;
+        if (!zone) {
+            printWarning(`[World] addNpc: zone does not exist at (${npc.x}, ${npc.z}, L${npc.level}), NPC spawn failed`);
+            npc.isActive = false;
+            return;
         }
+        zone.enter(npc);
 
         npc.resetEntity(true);
         npc.playAnimation(-1, 0);
@@ -1292,9 +1335,11 @@ class World {
     }
 
     removeNpc(npc: Npc, duration: number): void {
-        const zone = this.gameMap.getZone(npc.x, npc.z, npc.level);
+        const zone = this.gameMap.getZoneIfExists(npc.x, npc.z, npc.level);
         const adjustedDuration = this.scaleByPlayerCount(duration);
-        zone.leave(npc);
+        if (zone) {
+            zone.leave(npc);
+        }
         npc.isActive = false;
 
         switch (npc.blockWalk) {
@@ -1317,15 +1362,18 @@ class World {
     }
 
     getLoc(x: number, z: number, level: number, locId: number): Loc | null {
-        return this.gameMap.getZone(x, z, level).getLoc(x, z, locId);
+        const zone = this.gameMap.getZoneIfExists(x, z, level);
+        return zone ? zone.getLoc(x, z, locId) : null;
     }
 
     getObj(x: number, z: number, level: number, objId: number, receiver64: bigint): Obj | null {
-        return this.gameMap.getZone(x, z, level).getObj(x, z, objId, receiver64);
+        const zone = this.gameMap.getZoneIfExists(x, z, level);
+        return zone ? zone.getObj(x, z, objId, receiver64) : null;
     }
 
     getObjOfReceiver(x: number, z: number, level: number, objId: number, receiver64: bigint): Obj | null {
-        return this.gameMap.getZone(x, z, level).getObjOfReceiver(x, z, objId, receiver64);
+        const zone = this.gameMap.getZoneIfExists(x, z, level);
+        return zone ? zone.getObjOfReceiver(x, z, objId, receiver64) : null;
     }
 
     trackZone(zone: Zone): void {
@@ -1339,7 +1387,11 @@ class World {
             changeLocCollision(loc.shape, loc.angle, type.blockrange, type.length, type.width, type.active, loc.x, loc.z, loc.level, true);
         }
 
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] addLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.addLoc(loc);
         this.trackZone(zone);
         loc.setLifeCycle(duration);
@@ -1369,7 +1421,11 @@ class World {
         }
 
         // Notify zone that loc has been changed
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] changeLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.changeLoc(loc);
         this.trackZone(zone);
 
@@ -1385,14 +1441,22 @@ class World {
 
     mergeLoc(loc: Loc, player: Player, startCycle: number, endCycle: number, south: number, east: number, north: number, west: number): void {
         // printDebug(`[World] mergeLoc => name: ${LocType.get(loc.type).name}`);
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] mergeLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.mergeLoc(loc, player, startCycle, endCycle, south, east, north, west);
         this.trackZone(zone);
     }
 
     animLoc(loc: Loc, seq: number): void {
         // printDebug(`[World] animLoc => name: ${LocType.get(loc.type).name}, seq: ${seq}`);
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] animLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.animLoc(loc, seq);
         this.trackZone(zone);
     }
@@ -1408,7 +1472,11 @@ class World {
             changeLocCollision(loc.shape, loc.angle, type.blockrange, type.length, type.width, type.active, loc.x, loc.z, loc.level, false);
         }
 
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] removeLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.removeLoc(loc);
         this.trackZone(zone);
 
@@ -1439,7 +1507,11 @@ class World {
         }
 
         // Notify zone that loc has been changed
-        const zone: Zone = this.gameMap.getZone(loc.x, loc.z, loc.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(loc.x, loc.z, loc.level);
+        if (!zone) {
+            printWarning(`[World] revertLoc: zone does not exist at (${loc.x}, ${loc.z}, L${loc.level})`);
+            return;
+        }
         zone.changeLoc(loc);
         loc.setLifeCycle(-1);
         this.trackZone(zone);
@@ -1462,7 +1534,11 @@ class World {
             }
         }
 
-        const zone: Zone = this.gameMap.getZone(obj.x, obj.z, obj.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(obj.x, obj.z, obj.level);
+        if (!zone) {
+            printWarning(`[World] addObj: zone does not exist at (${obj.x}, ${obj.z}, L${obj.level})`);
+            return;
+        }
         zone.addObj(obj, receiver64);
         this.trackZone(zone);
         // If the obj is dropped to a specific person
@@ -1483,14 +1559,22 @@ class World {
     }
 
     revealObj(obj: Obj): void {
-        const zone: Zone = this.gameMap.getZone(obj.x, obj.z, obj.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(obj.x, obj.z, obj.level);
+        if (!zone) {
+            printWarning(`[World] revealObj: zone does not exist at (${obj.x}, ${obj.z}, L${obj.level})`);
+            return;
+        }
         zone.revealObj(obj);
         this.trackZone(zone);
     }
 
     changeObj(obj: Obj, newCount: number): void {
         // printDebug(`[World] changeObj => name: ${ObjType.get(obj.type).name}, receiverId: ${receiverId}, newCount: ${newCount}`);
-        const zone: Zone = this.gameMap.getZone(obj.x, obj.z, obj.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(obj.x, obj.z, obj.level);
+        if (!zone) {
+            printWarning(`[World] changeObj: zone does not exist at (${obj.x}, ${obj.z}, L${obj.level})`);
+            return;
+        }
         zone.changeObj(obj, obj.count, newCount);
         this.trackZone(zone);
     }
@@ -1502,7 +1586,11 @@ class World {
             return;
         }
         // printDebug(`[World] removeObj => name: ${ObjType.get(obj.type).name}, duration: ${duration}`);
-        const zone: Zone = this.gameMap.getZone(obj.x, obj.z, obj.level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(obj.x, obj.z, obj.level);
+        if (!zone) {
+            printWarning(`[World] removeObj: zone does not exist at (${obj.x}, ${obj.z}, L${obj.level})`);
+            return;
+        }
         const adjustedDuration = this.scaleByPlayerCount(duration);
         zone.removeObj(obj);
         this.trackZone(zone);
@@ -1516,13 +1604,21 @@ class World {
     }
 
     animMap(level: number, x: number, z: number, spotanim: number, height: number, delay: number): void {
-        const zone: Zone = this.gameMap.getZone(x, z, level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(x, z, level);
+        if (!zone) {
+            printWarning(`[World] animMap: zone does not exist at (${x}, ${z}, L${level})`);
+            return;
+        }
         zone.animMap(x, z, spotanim, height, delay);
         this.trackZone(zone);
     }
 
     mapProjAnim(level: number, x: number, z: number, dstX: number, dstZ: number, target: number, spotanim: number, srcHeight: number, dstHeight: number, startDelay: number, endDelay: number, peak: number, arc: number): void {
-        const zone: Zone = this.gameMap.getZone(x, z, level);
+        const zone: Zone | null = this.gameMap.getZoneIfExists(x, z, level);
+        if (!zone) {
+            printWarning(`[World] mapProjAnim: zone does not exist at (${x}, ${z}, L${level})`);
+            return;
+        }
         zone.mapProjAnim(x, z, dstX, dstZ, target, spotanim, srcHeight, dstHeight, startDelay, endDelay, peak, arc);
         this.trackZone(zone);
     }
@@ -1593,7 +1689,10 @@ class World {
         }
 
         rsbuf.removePlayer(player.slot);
-        this.gameMap.getZone(player.x, player.z, player.level).leave(player);
+        const zone = this.gameMap.getZoneIfExists(player.x, player.z, player.level);
+        if (zone) {
+            zone.leave(player);
+        }
         delete this.players[player.slot];
         player.unlink();
         changeNpcCollision(player.width, player.x, player.z, player.level, false);
@@ -1633,7 +1732,7 @@ class World {
             type: 'private_message',
             username: player.username,
             staffLvl: player.staffModLevel,
-            pmId: (Environment.node.id << 24) + ((Math.random() * 0xff) << 16) + this.pmCount++,
+            pmId: (Environment.NODE_ID << 24) + ((Math.random() * 0xff) << 16) + this.pmCount++,
             target: targetUsername37,
             message: message,
             coord: player.coord
@@ -1741,7 +1840,7 @@ class World {
     }
 
     private createDevThread() {
-        this.devThread = createRuntimeWorker(new URL('../cache/DevThread.ts', import.meta.url));
+        this.devThread = new Worker('./src/cache/DevThread.ts');
 
         this.devThread.on('message', msg => {
             try {
@@ -1751,7 +1850,7 @@ class World {
                     if (msg.error) {
                         console.error(msg.error);
 
-                        this.broadcastMes(msg.error.replaceAll(`${Environment.build.srcDir}/scripts/`, ''));
+                        this.broadcastMes(msg.error.replaceAll(`${Environment.BUILD_SRC_DIR}/scripts/`, ''));
                         this.broadcastMes('Check the console for more information.');
                     }
                 } else if (msg.type === 'dev_progress') {
@@ -1909,7 +2008,7 @@ class World {
                     return;
                 }
 
-                if (!Environment.node.members && !this.gameMap.isFreeToPlay(player.x, player.z)) {
+                if (!Environment.NODE_MEMBERS && !this.gameMap.isFreeToPlay(player.x, player.z)) {
                     // in a p2p zone when logging into f2p
                     if (player.members) {
                         client.send(Uint8Array.from([17]));
@@ -2113,12 +2212,12 @@ class World {
         if (client.opcode === 14) {
             client.send(Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0]));
 
-            if (Environment.node.production && Environment.node.rateLimitAddressLogin > 0) {
+            if (Environment.NODE_PRODUCTION && Environment.NODE_RATELIMIT_ADDRESS_LOGIN > 0) {
                 const last = this.loginAddressAttempts.get(client.remoteAddress);
                 const attempts = last ? last + 1 : 1;
                 this.loginAddressAttempts.set(client.remoteAddress, attempts);
 
-                if (attempts >= Environment.node.rateLimitAddressLogin) {
+                if (attempts >= Environment.NODE_RATELIMIT_ADDRESS_LOGIN) {
                     // login attempts exceeded
                     client.send(Uint8Array.from([16]));
                     client.close();
@@ -2138,7 +2237,7 @@ class World {
             if (rev === 0xff) {
                 rev = World.loginBuf.g2();
             }
-            if (rev !== Environment.engine.revision) {
+            if (rev !== Environment.ENGINE_REVISION) {
                 client.send(Uint8Array.from([6]));
                 client.close();
                 return;
@@ -2181,12 +2280,12 @@ class World {
             const username = World.loginBuf.gjstr();
             const password = World.loginBuf.gjstr();
 
-            if (Environment.node.production && Environment.node.rateLimitDeviceLogin > 0) {
+            if (Environment.NODE_PRODUCTION && Environment.NODE_RATELIMIT_DEVICE_LOGIN > 0) {
                 const last = this.loginDeviceAttempts.get(`${uid}@${client.remoteAddress}`);
                 const attempts = last ? last + 1 : 1;
                 this.loginDeviceAttempts.set(`${uid}@${client.remoteAddress}`, attempts);
 
-                if (attempts >= Environment.node.rateLimitDeviceLogin) {
+                if (attempts >= Environment.NODE_RATELIMIT_DEVICE_LOGIN) {
                     // login attempts exceeded
                     client.send(Uint8Array.from([16]));
                     client.close();
@@ -2206,7 +2305,7 @@ class World {
                 return;
             }
 
-            if (this.getTotalPlayers() > Environment.node.maxConnected) {
+            if (this.getTotalPlayers() > Environment.NODE_MAX_CONNECTED) {
                 client.send(Uint8Array.from([7]));
                 client.close();
                 return;
@@ -2255,7 +2354,7 @@ class World {
     }
 
     addWealthEvent(event: WealthEvent) {
-        if (filteredEventTypes.includes(event.event_type) && Math.abs(event.account_value) < Environment.node.minimumWealthValueEvent) {
+        if (filteredEventTypes.includes(event.event_type) && Math.abs(event.account_value) < Environment.NODE_MINIMUM_WEALTH_VALUE_EVENT) {
             return;
         }
 

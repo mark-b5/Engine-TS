@@ -324,7 +324,9 @@ export function shouldBuildConfigOutput(ext: string, out: string) {
 }
 
 export async function packConfigs(cache: FileStream, modelFlags: number[]) {
-    let rebuildParam = shouldBuildConfigOutput('.param', 'data/pack/server/param.dat');
+    // Params are schema for many other config values (param=...). Rebuilding them first avoids
+    // stale metadata after branch/content switches where timestamps can be misleading.
+    let rebuildParam = true;
     const rebuildCategory = shouldBuildFile(`${Environment.build.srcDir}/pack/category.pack`, 'data/pack/server/category.dat') || shouldBuild('tools/pack/config', '.ts', 'data/pack/server/category.dat');
     const rebuildDbTables = shouldBuildConfigOutput('.dbtable', 'data/pack/server/dbtable.dat');
     const rebuildDbRows = shouldBuildConfigOutput('.dbrow', 'data/pack/server/dbrow.dat');

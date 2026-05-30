@@ -17,6 +17,7 @@ import NumberOps from '#/engine/script/handlers/NumberOps.js';
 import ObjConfigOps from '#/engine/script/handlers/ObjConfigOps.js';
 import ObjOps from '#/engine/script/handlers/ObjOps.js';
 import PlayerOps from '#/engine/script/handlers/PlayerOps.js';
+import RegionOps from '#/engine/script/handlers/RegionOps.js';
 import ServerOps from '#/engine/script/handlers/ServerOps.js';
 import StringOps from '#/engine/script/handlers/StringOps.js';
 import StructOps from '#/engine/script/handlers/StructOps.js';
@@ -39,6 +40,7 @@ export default class ScriptRunner {
         // Language required opcodes
         ...CoreOps,
         ...ServerOps,
+        ...RegionOps,
         ...PlayerOps,
         ...NpcOps,
         ...LocOps,
@@ -130,7 +132,7 @@ export default class ScriptRunner {
             state.execution = ScriptState.RUNNING;
 
             let start = 0;
-            if (Environment.node.debugProfile) {
+            if (Environment.NODE_DEBUG_PROFILE) {
                 start = performance.now() * 1000;
             }
 
@@ -156,7 +158,7 @@ export default class ScriptRunner {
                 handler(state);
             }
 
-            if (Environment.node.debugProfile) {
+            if (Environment.NODE_DEBUG_PROFILE) {
                 const time: number = (performance.now() * 1000 - start) | 0;
                 if (time > 1000) {
                     const message: string = `Warning [cpu time]: Script: ${state.script.name}, time: ${time}us, opcount: ${state.opcount}`;
@@ -200,14 +202,14 @@ export default class ScriptRunner {
                     state.self.wrappedMessageGame(`    ${++trace}: ${frame.script.name} - ${frame.script.fileName}:${frame.script.lineNumber(frame.pc)}`);
                 }
 
-                if (Environment.node.production) {
+                if (Environment.NODE_PRODUCTION) {
                     state.self.logout();
                     state.self.loggingOut = true;
                 }
             } else if (state.self instanceof Npc) {
                 printError(`NPC script error - nid:${state.self.nid} type:${state.self.type}`);
 
-                if (Environment.node.production) {
+                if (Environment.NODE_PRODUCTION) {
                     World.removeNpc(state.self, 0);
                 }
             }

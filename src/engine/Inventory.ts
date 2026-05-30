@@ -104,7 +104,7 @@ export class Inventory {
         }
     }
 
-    add(id: number, count = 1, beginSlot = -1) {
+    add(id: number, count = 1, beginSlot = -1, ..._legacyFlags: boolean[]) {
         const type = ObjType.get(id);
         const stack = this.stackType != Inventory.NEVER_STACK && (type.stackable || this.stackType == Inventory.ALWAYS_STACK);
 
@@ -149,7 +149,7 @@ export class Inventory {
         return completed;
     }
 
-    remove(id: number, count = 1, beginSlot = -1) {
+    remove(id: number, count = 1, beginSlot = -1, ..._legacyFlags: boolean[]) {
         const stockObj = InvType.get(this.type).stockobj?.includes(id) === true;
 
         let totalRemoved = 0;

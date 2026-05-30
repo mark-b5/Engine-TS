@@ -38,6 +38,7 @@ import MessageGameEncoder from '#/network/game/server/codec/MessageGameEncoder.j
 import MessagePrivateEncoder from '#/network/game/server/codec/MessagePrivateEncoder.js';
 import MidiJingleEncoder from '#/network/game/server/codec/MidiJingleEncoder.js';
 import MidiSongEncoder from '#/network/game/server/codec/MidiSongEncoder.js';
+import MinimapToggleEncoder from '#/network/game/server/codec/MinimapToggleEncoder.js';
 import NpcInfoEncoder from '#/network/game/server/codec/NpcInfoEncoder.js';
 import ObjAddEncoder from '#/network/game/server/codec/ObjAddEncoder.js';
 import ObjCountEncoder from '#/network/game/server/codec/ObjCountEncoder.js';
@@ -46,6 +47,7 @@ import ObjRevealEncoder from '#/network/game/server/codec/ObjRevealEncoder.js';
 import PCountDialogEncoder from '#/network/game/server/codec/PCountDialogEncoder.js';
 import PlayerInfoEncoder from '#/network/game/server/codec/PlayerInfoEncoder.js';
 import RebuildNormalEncoder from '#/network/game/server/codec/RebuildNormalEncoder.js';
+import RebuildRegionEncoder from '#/network/game/server/codec/RebuildRegionEncoder.js';
 import ResetAnimsEncoder from '#/network/game/server/codec/ResetAnimsEncoder.js';
 import ResetClientVarCacheEncoder from '#/network/game/server/codec/ResetClientVarCacheEncoder.js';
 import SetMultiwayEncoder from '#/network/game/server/codec/SetMultiwayEncoder.js';
@@ -103,6 +105,7 @@ import MessageGame from '#/network/game/server/model/MessageGame.js';
 import MessagePrivate from '#/network/game/server/model/MessagePrivate.js';
 import MidiJingle from '#/network/game/server/model/MidiJingle.js';
 import MidiSong from '#/network/game/server/model/MidiSong.js';
+import MinimapToggle from '#/network/game/server/model/MinimapToggle.js';
 import NpcInfo from '#/network/game/server/model/NpcInfo.js';
 import ObjAdd from '#/network/game/server/model/ObjAdd.js';
 import ObjCount from '#/network/game/server/model/ObjCount.js';
@@ -111,6 +114,7 @@ import ObjReveal from '#/network/game/server/model/ObjReveal.js';
 import PCountDialog from '#/network/game/server/model/PCountDialog.js';
 import PlayerInfo from '#/network/game/server/model/PlayerInfo.js';
 import RebuildNormal from '#/network/game/server/model/RebuildNormal.js';
+import RebuildRegion from '#/network/game/server/model/RebuildRegion.js';
 import ResetAnims from '#/network/game/server/model/ResetAnims.js';
 import ResetClientVarCache from '#/network/game/server/model/ResetClientVarCache.js';
 import SetMultiway from '#/network/game/server/model/SetMultiway.js';
@@ -139,8 +143,6 @@ import SetPlayerOp from '#/network/game/server/model/SetPlayerOp.js';
 import SetPlayerOpEncoder from '#/network/game/server/codec/SetPlayerOpEncoder.js';
 import FriendlistLoaded from '#/network/game/server/model/FriendlistLoaded.js';
 import FriendlistLoadedEncoder from '#/network/game/server/codec/FriendlistLoadedEncoder.js';
-import MinimapToggle from '#/network/game/server/model/MinimapToggle.js';
-import MinimapToggleEncoder from '#/network/game/server/codec/MinimapToggleEncoder.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type GenericOutgoingMessage<T extends ServerGameMessage> = new (...args: any[]) => T;
@@ -209,6 +211,7 @@ class ServerGameProtRepository {
         this.bind(PCountDialog, new PCountDialogEncoder());
         this.bind(PlayerInfo, new PlayerInfoEncoder());
         this.bind(RebuildNormal, new RebuildNormalEncoder());
+        this.bind(RebuildRegion, new RebuildRegionEncoder());
         this.bind(ResetAnims, new ResetAnimsEncoder());
         this.bind(ResetClientVarCache, new ResetClientVarCacheEncoder());
         this.bind(SetMultiway, new SetMultiwayEncoder());

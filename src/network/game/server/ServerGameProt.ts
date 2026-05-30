@@ -66,6 +66,7 @@ export default class ServerGameProt {
 
     // maps
     static readonly REBUILD_NORMAL = new ServerGameProt(231, 4);
+    static readonly REBUILD_REGION = new ServerGameProt(53, -2);
 
     // vars
     static readonly VARP_SMALL = new ServerGameProt(203, 3);

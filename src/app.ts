@@ -11,7 +11,13 @@ import { startManagementWeb, startWeb } from '#/web.js';
 import OnDemand from '#/engine/OnDemand.js';
 import { createRuntimeWorker } from '#/util/RuntimeWorker.js';
 
-if (OnDemand.cache.count(0) !== 9 || OnDemand.cache.count(2) === 0 || !fs.existsSync('data/pack/server/script.dat')) {
+function hasRequiredOnDemandCache() {
+    // Archive 0 exposes the client bootstrap jags at fixed file ids 1..8.
+    const hasBootstrapJags = [1, 2, 3, 4, 5, 6, 7, 8].every(file => OnDemand.cache.has(0, file));
+    return hasBootstrapJags && OnDemand.cache.count(2) > 0;
+}
+
+if (!hasRequiredOnDemandCache() || !fs.existsSync('data/pack/server/script.dat')) {
     printInfo('Packing cache, please wait until you see the world is ready.');
 
     try {

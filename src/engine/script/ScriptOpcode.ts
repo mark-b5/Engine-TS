@@ -58,11 +58,18 @@ export const enum ScriptOpcode {
     MAP_PLAYERCOUNT, // official, see giant dwarf cutscene
     MOVECOORD, // official
     PLAYERCOUNT,
-    PROJANIM_MAP, // official
+    PROJANIM_MAP,
     SEQLENGTH, // official
     SPOTANIM_MAP,
     WORLD_DELAY, // official
-    MIDI_LENGTH,
+    REGION_CREATE = 1023,
+    REGION_SET,
+    REGION_GETCOORD,
+    REGION_FINDBYCOORD,
+    REGION_UID,
+    REGION_FINDBYUID,
+    REGION_SETEXITCOORD,
+    MIDI_LENGTH = 1030,
 
     // Player ops (2000-2499)
     AFK_EVENT = 2000,
@@ -100,10 +107,12 @@ export const enum ScriptOpcode {
     HUNTNEXT, // official
     IF_CLOSE, // official
     IF_OPENCHAT,
+    IF_OPENFULL,
     IF_OPENMAIN_SIDE,
     IF_OPENMAIN,
     IF_OPENOVERLAY,
     IF_OPENSIDE,
+    IF_SETANGLE,
     IF_SETANIM, // official
     IF_SETCOLOUR, // official
     IF_SETHIDE, // official
@@ -112,7 +121,9 @@ export const enum ScriptOpcode {
     IF_SETOBJECT, // official
     IF_SETPLAYERHEAD, // official
     IF_SETPOSITION, // official
-    IF_ADDRESUMEBUTTON,
+    IF_SETRESUMEBUTTONS,
+    IF_ADDRESUMEBUTTON = IF_SETRESUMEBUTTONS,
+    IF_SETROTATION,
     IF_SETSCROLLPOS, // official
     IF_SETTAB,
     IF_SETTABACTIVE,
@@ -156,9 +167,10 @@ export const enum ScriptOpcode {
     P_STOPACTION, // official
     P_TELEJUMP, // official
     P_TELEPORT,
+    P_TRANSMOGRIFY,
     P_WALK, // official
     PLAYERMEMBER, // official
-    PROJANIM_PL, // official
+    PROJANIM_PL, // todo: take active_player
     QUEUE, // official
     QUEUEVARARG,
     READYANIM,
@@ -169,8 +181,9 @@ export const enum ScriptOpcode {
     SET_PLAYER_OP,
     SETGENDER,
     SETIDKIT,
-    SET_SKILL_LEVEL,
     SETIDKCOLOUR,
+    SET_SKILL_LEVEL,
+    SETSKINCOLOUR,
     SETTIMER,
     SOFTTIMER, // official
     SOUND_SYNTH, // official, newspost
@@ -246,11 +259,12 @@ export const enum ScriptOpcode {
     NPC_STATHEAL, // official
     NPC_STATSUB,
     NPC_TELE,
+    NPC_TELEJUMP,
     NPC_TYPE, // official
     NPC_UID,
     NPC_WALK,
     NPC_WALKTRIGGER, // official
-    PROJANIM_NPC, // official
+    PROJANIM_NPC, // todo: take active_npc
     SPOTANIM_NPC,
 
     // Loc ops (3000-3499)
@@ -271,7 +285,7 @@ export const enum ScriptOpcode {
 
     // Obj ops (3500-4000)
     OBJ_ADD = 3500, // official
-    OBJ_ADDALL, // official
+    OBJ_ADDALL,
     OBJ_COORD,
     OBJ_COUNT,
     OBJ_DEL,
@@ -280,7 +294,7 @@ export const enum ScriptOpcode {
     OBJ_FINDNEXT,
     OBJ_NAME,
     OBJ_PARAM,
-    OBJ_TAKEITEM, // official
+    OBJ_TAKEITEM,
     OBJ_TYPE,
 
     // Npc config ops (4000-4099)
@@ -331,17 +345,17 @@ export const enum ScriptOpcode {
     INV_CLEAR,
     INV_DEBUGNAME,
     INV_DEL, // official
-    INV_DELSLOT, // official
-    INV_DROPALL, // official
+    INV_DELSLOT,
+    INV_DROPALL,
     INV_DROPITEM_DELAYED,
-    INV_DROPITEM, // official
-    INV_DROPSLOT, // official
+    INV_DROPITEM,
+    INV_DROPSLOT,
     INV_FREESPACE,
     INV_GETNUM,
     INV_GETOBJ, // official
     INV_ITEMSPACE,
     INV_ITEMSPACE2, // official
-    INV_MOVEFROMSLOT, // official
+    INV_MOVEFROMSLOT,
     INV_MOVEITEM_CERT, // official
     INV_MOVEITEM_UNCERT, // official
     INV_MOVEITEM, // official
@@ -508,9 +522,16 @@ export const ScriptOpcodeMap: Map<string, number> = new Map([
     ['PLAYERCOUNT', ScriptOpcode.PLAYERCOUNT],
     ['PROJANIM_MAP', ScriptOpcode.PROJANIM_MAP],
     ['SEQLENGTH', ScriptOpcode.SEQLENGTH],
+    ['MIDI_LENGTH', ScriptOpcode.MIDI_LENGTH],
     ['SPOTANIM_MAP', ScriptOpcode.SPOTANIM_MAP],
     ['WORLD_DELAY', ScriptOpcode.WORLD_DELAY],
-    ['MIDI_LENGTH', ScriptOpcode.MIDI_LENGTH],
+    ['REGION_CREATE', ScriptOpcode.REGION_CREATE],
+    ['REGION_SET', ScriptOpcode.REGION_SET],
+    ['REGION_GETCOORD', ScriptOpcode.REGION_GETCOORD],
+    ['REGION_FINDBYCOORD', ScriptOpcode.REGION_FINDBYCOORD],
+    ['REGION_UID', ScriptOpcode.REGION_UID],
+    ['REGION_FINDBYUID', ScriptOpcode.REGION_FINDBYUID],
+    ['REGION_SETEXITCOORD', ScriptOpcode.REGION_SETEXITCOORD],
 
     ['AFK_EVENT', ScriptOpcode.AFK_EVENT],
     ['ALLOWDESIGN', ScriptOpcode.ALLOWDESIGN],
@@ -547,18 +568,22 @@ export const ScriptOpcodeMap: Map<string, number> = new Map([
     ['HUNTNEXT', ScriptOpcode.HUNTNEXT],
     ['IF_CLOSE', ScriptOpcode.IF_CLOSE],
     ['IF_OPENCHAT', ScriptOpcode.IF_OPENCHAT],
+    ['IF_OPENFULL', ScriptOpcode.IF_OPENFULL],
     ['IF_OPENMAIN_SIDE', ScriptOpcode.IF_OPENMAIN_SIDE],
     ['IF_OPENMAIN', ScriptOpcode.IF_OPENMAIN],
     ['IF_OPENOVERLAY', ScriptOpcode.IF_OPENOVERLAY],
     ['IF_OPENSIDE', ScriptOpcode.IF_OPENSIDE],
+    ['IF_SETANGLE', ScriptOpcode.IF_SETANGLE],
     ['IF_SETANIM', ScriptOpcode.IF_SETANIM],
     ['IF_SETCOLOUR', ScriptOpcode.IF_SETCOLOUR],
     ['IF_SETHIDE', ScriptOpcode.IF_SETHIDE],
     ['IF_SETMODEL', ScriptOpcode.IF_SETMODEL],
+    ['IF_SETROTATION', ScriptOpcode.IF_SETROTATION],
     ['IF_SETNPCHEAD', ScriptOpcode.IF_SETNPCHEAD],
     ['IF_SETOBJECT', ScriptOpcode.IF_SETOBJECT],
     ['IF_SETPLAYERHEAD', ScriptOpcode.IF_SETPLAYERHEAD],
     ['IF_SETPOSITION', ScriptOpcode.IF_SETPOSITION],
+    ['IF_SETRESUMEBUTTONS', ScriptOpcode.IF_SETRESUMEBUTTONS],
     ['IF_ADDRESUMEBUTTON', ScriptOpcode.IF_ADDRESUMEBUTTON],
     ['IF_SETSCROLLPOS', ScriptOpcode.IF_SETSCROLLPOS],
     ['IF_SETTAB', ScriptOpcode.IF_SETTAB],
@@ -603,6 +628,7 @@ export const ScriptOpcodeMap: Map<string, number> = new Map([
     ['P_STOPACTION', ScriptOpcode.P_STOPACTION],
     ['P_TELEJUMP', ScriptOpcode.P_TELEJUMP],
     ['P_TELEPORT', ScriptOpcode.P_TELEPORT],
+    ['P_TRANSMOGRIFY', ScriptOpcode.P_TRANSMOGRIFY],
     ['P_WALK', ScriptOpcode.P_WALK],
     ['PLAYERMEMBER', ScriptOpcode.PLAYERMEMBER],
     ['PROJANIM_NPC', ScriptOpcode.PROJANIM_NPC],
@@ -617,8 +643,9 @@ export const ScriptOpcodeMap: Map<string, number> = new Map([
     ['SET_PLAYER_OP', ScriptOpcode.SET_PLAYER_OP],
     ['SETGENDER', ScriptOpcode.SETGENDER],
     ['SETIDKIT', ScriptOpcode.SETIDKIT],
-    ['SET_SKILL_LEVEL', ScriptOpcode.SET_SKILL_LEVEL],
     ['SETIDKCOLOUR', ScriptOpcode.SETIDKCOLOUR],
+    ['SET_SKILL_LEVEL', ScriptOpcode.SET_SKILL_LEVEL],
+    ['SETSKINCOLOUR', ScriptOpcode.SETSKINCOLOUR],
     ['SETTIMER', ScriptOpcode.SETTIMER],
     ['SOFTTIMER', ScriptOpcode.SOFTTIMER],
     ['SOUND_SYNTH', ScriptOpcode.SOUND_SYNTH],
@@ -698,6 +725,7 @@ export const ScriptOpcodeMap: Map<string, number> = new Map([
     ['NPC_STATHEAL', ScriptOpcode.NPC_STATHEAL],
     ['NPC_STATSUB', ScriptOpcode.NPC_STATSUB],
     ['NPC_TELE', ScriptOpcode.NPC_TELE],
+    ['NPC_TELEJUMP', ScriptOpcode.NPC_TELEJUMP],
     ['NPC_TYPE', ScriptOpcode.NPC_TYPE],
     ['NPC_UID', ScriptOpcode.NPC_UID],
     ['NPC_WALK', ScriptOpcode.NPC_WALK],

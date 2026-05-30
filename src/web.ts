@@ -390,69 +390,83 @@ async function startNodeWeb(): Promise<void> {
 }
 
 async function startBunWeb(): Promise<void> {
-    Bun.serve<WebSocketData, never>({
-        port: Environment.web.port,
-        async fetch(req, server) {
-            const url = new URL(req.url ?? `http://${req.headers.get('host')}`);
+    const start = (port: number) =>
+        Bun.serve<WebSocketData, never>({
+            port,
+            async fetch(req, server) {
+                const url = new URL(req.url ?? `http://${req.headers.get('host')}`);
 
-            if (req.method === 'GET' && url.pathname === '/') {
-                const upgraded = server.upgrade(req, {
-                    data: {
-                        client: new WSClientSocket(),
-                        origin: req.headers.get('origin'),
-                        remoteAddress: server.requestIP(req)?.address ?? 'unknown'
+                if (req.method === 'GET' && url.pathname === '/') {
+                    const upgraded = server.upgrade(req, {
+                        data: {
+                            client: new WSClientSocket(),
+                            origin: req.headers.get('origin'),
+                            remoteAddress: server.requestIP(req)?.address ?? 'unknown'
+                        }
+                    });
+
+                    if (upgraded) {
+                        return undefined;
                     }
-                });
 
-                if (upgraded) {
-                    return undefined;
+                    return new Response(null, { status: 404 });
                 }
 
-                return new Response(null, { status: 404 });
-            }
-
-            return handleWebRequest(req);
-        },
-        websocket: {
-            maxPayloadLength: 2000,
-            open(ws) {
-                if (Environment.web.allowedOrigin && ws.data.origin !== Environment.web.allowedOrigin) {
-                    ws.terminate();
-                    return;
-                }
-
-                ws.data.client.init(ws, ws.data.remoteAddress ?? ws.remoteAddress);
+                return handleWebRequest(req);
             },
-            message(ws, message: Buffer<ArrayBuffer>) {
-                try {
-                    const { client } = ws.data;
-                    if (client.state === -1 || client.remaining <= 0) {
-                        client.terminate();
+            websocket: {
+                maxPayloadLength: 2000,
+                open(ws) {
+                    if (Environment.web.allowedOrigin && ws.data.origin !== Environment.web.allowedOrigin) {
+                        ws.terminate();
                         return;
                     }
 
-                    client.buffer(message);
+                    ws.data.client.init(ws, ws.data.remoteAddress ?? ws.remoteAddress);
+                },
+                message(ws, message: Buffer<ArrayBuffer>) {
+                    try {
+                        const { client } = ws.data;
+                        if (client.state === -1 || client.remaining <= 0) {
+                            client.terminate();
+                            return;
+                        }
 
-                    if (client.state === 0) {
-                        World.onClientData(client);
-                    } else if (client.state === 2) {
-                        OnDemand.onClientData(client);
+                        client.buffer(message);
+
+                        if (client.state === 0) {
+                            World.onClientData(client);
+                        } else if (client.state === 2) {
+                            OnDemand.onClientData(client);
+                        }
+                    } catch (_) {
+                        ws.terminate();
                     }
-                } catch (_) {
-                    ws.terminate();
-                }
-            },
-            close(ws) {
-                const { client } = ws.data;
-                client.state = -1;
+                },
+                close(ws) {
+                    const { client } = ws.data;
+                    client.state = -1;
 
-                if (client.player) {
-                    client.player.addSessionLog(LoggerEventType.ENGINE, 'WS socket closed');
-                    client.player.client = new NullClientSocket();
+                    if (client.player) {
+                        client.player.addSessionLog(LoggerEventType.ENGINE, 'WS socket closed');
+                        client.player.client = new NullClientSocket();
+                    }
                 }
             }
+        });
+
+    try {
+        start(Environment.web.port);
+    } catch (err: any) {
+        if (Environment.web.port === 80 && err?.code === 'EADDRINUSE') {
+            const fallbackPort = 8888;
+            console.warn(`[web] Port 80 in use, falling back to ${fallbackPort}`);
+            Environment.web.port = fallbackPort;
+            start(fallbackPort);
+            return;
         }
-    });
+        throw err;
+    }
 }
 
 async function startNodeManagementWeb(): Promise<void> {
@@ -473,12 +487,26 @@ async function startNodeManagementWeb(): Promise<void> {
 }
 
 async function startBunManagementWeb(): Promise<void> {
-    Bun.serve({
-        port: Environment.web.managementPort,
-        fetch(req) {
-            return handleManagementRequest(req);
+    const start = (port: number) =>
+        Bun.serve({
+            port,
+            fetch(req) {
+                return handleManagementRequest(req);
+            }
+        });
+
+    try {
+        start(Environment.web.managementPort);
+    } catch (err: any) {
+        if (err?.code === 'EADDRINUSE') {
+            const fallbackPort = Environment.web.managementPort + 1;
+            console.warn(`[web] Management port ${Environment.web.managementPort} in use, falling back to ${fallbackPort}`);
+            Environment.web.managementPort = fallbackPort;
+            start(fallbackPort);
+            return;
         }
-    });
+        throw err;
+    }
 }
 
 export async function startWeb() {

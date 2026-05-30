@@ -34,7 +34,9 @@ const ServerOps: CommandHandlers = {
         let count = 0;
         for (let x = Math.floor(from.x / 8); x <= Math.ceil(to.x / 8); x++) {
             for (let z = Math.floor(from.z / 8); z <= Math.ceil(to.z / 8); z++) {
-                for (const player of World.gameMap.getZone(x << 3, z << 3, from.level).getAllPlayersSafe()) {
+                const playerCountZone = World.gameMap.getZoneIfExists(x << 3, z << 3, from.level);
+                if (!playerCountZone) continue;
+                for (const player of playerCountZone.getAllPlayersSafe()) {
                     if (player.x >= from.x && player.x <= to.x && player.z >= from.z && player.z <= to.z) {
                         count++;
                     }
@@ -216,7 +218,9 @@ const ServerOps: CommandHandlers = {
         // Maybe theres a smarter way to do this?
         for (let x = -8; x <= 0; x += 8) {
             for (let z = -8; z <= 0; z += 8) {
-                for (const loc of World.gameMap.getZone(coord.x + x, coord.z + z, coord.level).getAllLocsUnsafe()) {
+                const locAddZone = World.gameMap.getZoneIfExists(coord.x + x, coord.z + z, coord.level);
+                if (!locAddZone) continue;
+                for (const loc of locAddZone.getAllLocsUnsafe()) {
                     const type = check(loc.type, LocTypeValid);
 
                     if (type.active !== 1) {
@@ -246,7 +250,9 @@ const ServerOps: CommandHandlers = {
         const coord: CoordGrid = check(state.popInt(), CoordValid);
         for (let x = -8; x <= 0; x += 8) {
             for (let z = -8; z <= 0; z += 8) {
-                for (const loc of World.gameMap.getZone(coord.x + x, coord.z + z, coord.level).getAllLocsSafe()) {
+                const mapLocZone = World.gameMap.getZoneIfExists(coord.x + x, coord.z + z, coord.level);
+                if (!mapLocZone) continue;
+                for (const loc of mapLocZone.getAllLocsSafe()) {
                     const type = check(loc.type, LocTypeValid);
 
                     if (type.active !== 1) {

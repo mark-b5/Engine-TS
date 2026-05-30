@@ -19,7 +19,6 @@ import Player from '#/engine/entity/Player.js';
 import { canTravel, changeNpcCollision, changePlayerCollision, findPath, findPathToEntity, findPathToLoc, isApproached, isZoneAllocated, reachedEntity, reachedLoc, reachedObj, findNaivePath } from '#/engine/GameMap.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import World from '#/engine/World.js';
-import NpcType from '#/cache/config/NpcType.js';
 
 type TargetSubject = {
     type: number;
@@ -30,6 +29,7 @@ export type TargetOp = ServerTriggerType | NpcMode;
 
 export default abstract class PathingEntity extends Entity {
     // constructor properties
+    protected readonly moveRestrict: MoveRestrict;
     blockWalk: BlockWalk;
     moveStrategy: MoveStrategy;
     private readonly coordmask: number;
@@ -102,8 +102,9 @@ export default abstract class PathingEntity extends Entity {
     spotanimHeight: number = -1;
     spotanimTime: number = -1;
 
-    protected constructor(level: number, x: number, z: number, width: number, length: number, lifecycle: EntityLifeCycle, blockWalk: BlockWalk, moveStrategy: MoveStrategy, coordmask: number, entitymask: number) {
+    protected constructor(level: number, x: number, z: number, width: number, length: number, lifecycle: EntityLifeCycle, moveRestrict: MoveRestrict, blockWalk: BlockWalk, moveStrategy: MoveStrategy, coordmask: number, entitymask: number) {
         super(level, x, z, width, length, lifecycle);
+        this.moveRestrict = moveRestrict;
         this.blockWalk = blockWalk;
         this.moveStrategy = moveStrategy;
         this.coordmask = coordmask;
@@ -122,6 +123,11 @@ export default abstract class PathingEntity extends Entity {
     abstract updateMovement(): boolean;
     abstract blockWalkFlag(): CollisionFlag;
     abstract defaultMoveSpeed(): MoveSpeed;
+
+    /**
+     * Hook for entity-specific logic when tile/level changes are applied.
+     */
+    protected onTileUpdated(_previousX: number, _previousZ: number, _previousLevel: number): void {}
 
     /**
      * Process movement function for a PathingEntity to use.
@@ -179,8 +185,15 @@ export default abstract class PathingEntity extends Entity {
         this.lastStepZ = previousZ;
 
         if (CoordGrid.zone(previousX) !== CoordGrid.zone(this.x) || CoordGrid.zone(previousZ) !== CoordGrid.zone(this.z) || previousLevel != this.level) {
-            World.gameMap.getZone(previousX, previousZ, previousLevel).leave(this);
-            World.gameMap.getZone(this.x, this.z, this.level).enter(this);
+            const previousZone = World.gameMap.getZoneIfExists(previousX, previousZ, previousLevel);
+            const currentZone = World.gameMap.getZoneIfExists(this.x, this.z, this.level);
+
+            if (previousZone && previousZone !== currentZone) {
+                previousZone.leave(this);
+            }
+            if (currentZone && previousZone !== currentZone) {
+                currentZone.enter(this);
+            }
         }
     }
 
@@ -219,12 +232,20 @@ export default abstract class PathingEntity extends Entity {
         const srcX = this.x;
         const srcZ = this.z;
 
+        // After map initialization, entities must not move into zones that were never allocated.
+        const nextX: number = this.x + delta[0];
+        const nextZ: number = this.z + delta[1];
+        if (!World.gameMap.getZoneIfExists(nextX, nextZ, this.level)) {
+            return -1;
+        }
+
         // Move entity
-        this.x = this.x + delta[0];
-        this.z = this.z + delta[1];
+        this.x = nextX;
+        this.z = nextZ;
 
         // Refresh zone presence if we had a waypoint, even if we didn't move
         this.refreshZonePresence(srcX, srcZ, this.level);
+        this.onTileUpdated(srcX, srcZ, this.level);
 
         // Update waypoint index if we reached the current waypoint
         if (this.waypointIndex !== -1) {
@@ -272,6 +293,10 @@ export default abstract class PathingEntity extends Entity {
         this.setAllowRepath(AllowRepath.BEFOREDEST);
     }
 
+    pathToMoveClick(waypoints: ArrayLike<number>, _useRouteFinder = true): void {
+        this.queueWaypoints(waypoints);
+    }
+
     setAllowRepath(value: AllowRepath) {
         this.allowRepath = value;
     }
@@ -281,27 +306,49 @@ export default abstract class PathingEntity extends Entity {
     }
 
     teleJump(x: number, z: number, level: number): void {
-        this.teleport(x, z, level);
+        if (!this.teleport(x, z, level)) {
+            return;
+        }
         this.moveSpeed = MoveSpeed.INSTANT;
         this.jump = true;
     }
 
-    teleport(x: number, z: number, level: number): void {
+    teleport(x: number, z: number, level: number): boolean {
         if (isNaN(level)) {
             level = 0;
         }
         level = Math.max(0, Math.min(level, 3));
 
-        if (!isZoneAllocated(level, x, z) && (!(this instanceof Player) || this.staffModLevel < 3)) {
-            if (this instanceof Player) {
-                this.messageGame('Invalid teleport!');
-            }
-            return;
-        }
-
         const previousX: number = this.x;
         const previousZ: number = this.z;
         const previousLevel: number = this.level;
+
+        if (this instanceof Player) {
+            const movingToInstance: boolean = Player.isInstanceX(x);
+            if (movingToInstance) {
+                const targetInstance = World.instances.findInstanceByTile(level, x, z);
+                if (targetInstance?.exitCoord) {
+                    this.previousOverworldX = targetInstance.exitCoord.x;
+                    this.previousOverworldZ = targetInstance.exitCoord.z;
+                    this.previousOverworldLevel = targetInstance.exitCoord.level;
+                } else {
+                    this.previousOverworldX = previousX;
+                    this.previousOverworldZ = previousZ;
+                    this.previousOverworldLevel = previousLevel;
+                }
+                this.hasPreviousOverworldTile = true;
+            }
+        }
+
+        const allocated: boolean = isZoneAllocated(level, x, z);
+        const initialized: boolean = World.gameMap.hasZone(x, z, level);
+        if (!allocated || !initialized) {
+            if (this instanceof Player) {
+                this.messageGame('Invalid teleport!');
+            }
+            return false;
+        }
+
         this.x = x;
         this.z = z;
         this.level = level;
@@ -310,6 +357,7 @@ export default abstract class PathingEntity extends Entity {
         const moveZ: number = CoordGrid.moveZ(this.z, dir);
         this.focus(CoordGrid.fine(moveX, this.width), CoordGrid.fine(moveZ, this.length), false);
         this.refreshZonePresence(previousX, previousZ, previousLevel);
+        this.onTileUpdated(previousX, previousZ, previousLevel);
         this.lastStepX = this.x - 1;
         this.lastStepZ = this.z;
         this.tele = true;
@@ -318,6 +366,8 @@ export default abstract class PathingEntity extends Entity {
             this.moveSpeed = MoveSpeed.INSTANT;
             this.jump = true;
         }
+
+        return true;
     }
 
     /**
@@ -565,23 +615,20 @@ export default abstract class PathingEntity extends Entity {
     }
 
     protected getCollisionStrategy(): CollisionType | null {
-        if (this instanceof Npc) {
-            const type: NpcType = NpcType.get(this.type);
-            if (type.moverestrict === MoveRestrict.NORMAL) {
-                return CollisionType.NORMAL;
-            } else if (type.moverestrict === MoveRestrict.BLOCKED) {
-                return CollisionType.BLOCKED;
-            } else if (type.moverestrict === MoveRestrict.BLOCKED_NORMAL) {
-                return CollisionType.LINE_OF_SIGHT;
-            } else if (type.moverestrict === MoveRestrict.INDOORS) {
-                return CollisionType.INDOORS;
-            } else if (type.moverestrict === MoveRestrict.OUTDOORS) {
-                return CollisionType.OUTDOORS;
-            } else if (type.moverestrict === MoveRestrict.NOMOVE) {
-                return null;
-            } else if (type.moverestrict === MoveRestrict.PASSTHRU) {
-                return CollisionType.NORMAL;
-            }
+        if (this.moveRestrict === MoveRestrict.NORMAL) {
+            return CollisionType.NORMAL;
+        } else if (this.moveRestrict === MoveRestrict.BLOCKED) {
+            return CollisionType.BLOCKED;
+        } else if (this.moveRestrict === MoveRestrict.BLOCKED_NORMAL) {
+            return CollisionType.LINE_OF_SIGHT;
+        } else if (this.moveRestrict === MoveRestrict.INDOORS) {
+            return CollisionType.INDOORS;
+        } else if (this.moveRestrict === MoveRestrict.OUTDOORS) {
+            return CollisionType.OUTDOORS;
+        } else if (this.moveRestrict === MoveRestrict.NOMOVE) {
+            return null;
+        } else if (this.moveRestrict === MoveRestrict.PASSTHRU) {
+            return CollisionType.NORMAL;
         }
         return CollisionType.NORMAL;
     }

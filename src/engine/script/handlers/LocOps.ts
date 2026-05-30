@@ -26,7 +26,8 @@ const LocOps: CommandHandlers = {
         check(duration, DurationValid);
 
         // Search through zone and change a loc if it's on the same layer
-        const locs: IterableIterator<Loc> = World.gameMap.getZone(position.x, position.z, position.level).getLocsUnsafe(CoordGrid.packZoneCoord(position.x, position.z));
+        const locSearchZone = World.gameMap.getZoneIfExists(position.x, position.z, position.level);
+        const locs: IterableIterator<Loc> = locSearchZone ? locSearchZone.getLocsUnsafe(CoordGrid.packZoneCoord(position.x, position.z)) : ([][Symbol.iterator]() as IterableIterator<Loc>);
         for (const loc of locs) {
             if (loc.layer === locLayer) {
                 World.changeLoc(loc, type, locShape, locAngle, duration);
