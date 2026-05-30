@@ -145,7 +145,6 @@
 
         function hideControls() {
             document.getElementById('controls').style.display = 'none';
-            document.getElementById('fkey-panel').style.display = 'none';
             document.getElementById('hide-message').style.display = '';
 
             countDown = 0;
@@ -256,109 +255,6 @@
             canvas.style.imageRendering = filterSelect;
         }
 
-        const SIDEBAR_ICONS = ['Combat', 'Stats', 'Quest', 'Inventory', 'Equipment', 'Prayer', 'Magic', 'Friends', 'Ignore', 'Logout', 'Options', 'Emotes', 'Music', 'Tab 14', 'Tab 15'];
-
-        function toggleTrueTile() {
-            const cur = localStorage.getItem('showLocalTrueTile') !== 'false';
-            const next = !cur;
-            localStorage.setItem('showLocalTrueTile', String(next));
-            const link = document.getElementById('trueTileLink');
-            link.textContent = 'True tile: ' + (next ? 'on' : 'off');
-            link.style.color = next ? '' : '#888888';
-            if (window.gameClient) window.gameClient.setOverlaySettings({ showLocalTrueTile: next });
-        }
-
-        function toggleHoveredTile() {
-            const cur = localStorage.getItem('showHoveredTrueTile') !== 'false';
-            const next = !cur;
-            localStorage.setItem('showHoveredTrueTile', String(next));
-            const link = document.getElementById('hoveredTileLink');
-            link.textContent = 'Hover tile: ' + (next ? 'on' : 'off');
-            link.style.color = next ? '' : '#888888';
-            if (window.gameClient) window.gameClient.setOverlaySettings({ showHoveredTrueTile: next });
-        }
-
-        function togglePriorityOutline() {
-            const cur = localStorage.getItem('showPriorityOutline') !== 'false';
-            const next = !cur;
-            localStorage.setItem('showPriorityOutline', String(next));
-            const link = document.getElementById('priorityOutlineLink');
-            link.textContent = 'Priority: ' + (next ? 'on' : 'off');
-            link.style.color = next ? '' : '#888888';
-            if (window.gameClient) window.gameClient.setOverlaySettings({ showPriorityOutline: next });
-        }
-
-        function toggleFkeyPanel() {
-            const panel = document.getElementById('fkey-panel');
-            panel.style.display = panel.style.display === 'none' ? '' : 'none';
-        }
-
-        function buildFkeyOptions() {
-            let html = '<option value="-1">None</option>';
-            for (let i = 0; i < SIDEBAR_ICONS.length; i++) {
-                html += '<option value="' + i + '">' + SIDEBAR_ICONS[i] + '</option>';
-            }
-            for (let f = 1; f <= 9; f++) {
-                document.getElementById('fkey' + f).innerHTML = html;
-            }
-        }
-
-        function saveFKeys() {
-            const bindings = new Array(SIDEBAR_ICONS.length).fill(0);
-            for (let fkey = 1; fkey <= 9; fkey++) {
-                const iconIdx = parseInt(document.getElementById('fkey' + fkey).value, 10);
-                if (iconIdx >= 0 && iconIdx < bindings.length) {
-                    bindings[iconIdx] = fkey;
-                }
-            }
-            localStorage.setItem('fkeyBindings', JSON.stringify(bindings));
-            if (window.gameClient) window.gameClient.applyFKeyBindings(bindings);
-        }
-
-        function loadOverlaySettings() {
-            const showLocal = localStorage.getItem('showLocalTrueTile') !== 'false';
-            const showHovered = localStorage.getItem('showHoveredTrueTile') !== 'false';
-            const showPriority = localStorage.getItem('showPriorityOutline') !== 'false';
-
-            const trueTileLink = document.getElementById('trueTileLink');
-            trueTileLink.textContent = 'True tile: ' + (showLocal ? 'on' : 'off');
-            trueTileLink.style.color = showLocal ? '' : '#888888';
-
-            const hoveredTileLink = document.getElementById('hoveredTileLink');
-            hoveredTileLink.textContent = 'Hover tile: ' + (showHovered ? 'on' : 'off');
-            hoveredTileLink.style.color = showHovered ? '' : '#888888';
-
-            const priorityOutlineLink = document.getElementById('priorityOutlineLink');
-            priorityOutlineLink.textContent = 'Priority: ' + (showPriority ? 'on' : 'off');
-            priorityOutlineLink.style.color = showPriority ? '' : '#888888';
-
-            if (window.gameClient) {
-                window.gameClient.setOverlaySettings({
-                    showLocalTrueTile: showLocal,
-                    showHoveredTrueTile: showHovered,
-                    showPriorityOutline: showPriority
-                });
-            }
-        }
-
-        function loadFKeySettings() {
-            buildFkeyOptions();
-            const saved = localStorage.getItem('fkeyBindings');
-            const bindings = saved ? JSON.parse(saved) : new Array(SIDEBAR_ICONS.length).fill(0);
-
-            for (let fkey = 1; fkey <= 9; fkey++) {
-                document.getElementById('fkey' + fkey).value = '-1';
-            }
-            for (let icon = 0; icon < bindings.length; icon++) {
-                const fkey = bindings[icon];
-                if (fkey >= 1 && fkey <= 9) {
-                    const sel = document.getElementById('fkey' + fkey);
-                    if (sel) sel.value = String(icon);
-                }
-            }
-
-            if (window.gameClient) window.gameClient.applyFKeyBindings(bindings);
-        }
     </script>
 </head>
 
@@ -396,40 +292,45 @@
             </span>
             <a class="green" href="#" id="fullscreen" onclick="toggleFullscreen();">Go Fullscreen</a> |
             <a class="green" href="#" id="screenshot" onclick="saveScreenshot();">Take screenshot</a> |
-            <a class="green" href="#" id="trueTileLink" onclick="toggleTrueTile(); return false;">True tile: on</a> |
-            <a class="green" href="#" id="hoveredTileLink" onclick="toggleHoveredTile(); return false;">Hover tile: on</a> |
-            <a class="green" href="#" id="priorityOutlineLink" onclick="togglePriorityOutline(); return false;">Priority: on</a> |
-            <a class="green" href="#" onclick="toggleFkeyPanel(); return false;">FKeys ▾</a> |
             <a class="green" href="#" id="hide" onclick="hideControls();">Hide controls</a>
-        </div>
-        <div class="centered" id="fkey-panel" style="display: none; margin-top: 3px; margin-bottom: 5px;">
-            <table>
-                <tr>
-                    <td>F1:</td><td><select id="fkey1" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F4:</td><td><select id="fkey4" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F7:</td><td><select id="fkey7" onchange="saveFKeys();"></select></td>
-                </tr>
-                <tr>
-                    <td>F2:</td><td><select id="fkey2" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F5:</td><td><select id="fkey5" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F8:</td><td><select id="fkey8" onchange="saveFKeys();"></select></td>
-                </tr>
-                <tr>
-                    <td>F3:</td><td><select id="fkey3" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F6:</td><td><select id="fkey6" onchange="saveFKeys();"></select></td>
-                    <td>&nbsp;&nbsp;</td>
-                    <td>F9:</td><td><select id="fkey9" onchange="saveFKeys();"></select></td>
-                </tr>
-            </table>
         </div>
         <div id="hide-message" style="display: none;">
             <p class="green blink">Controls have been hidden press ctrl+alt+i to unhide.</p>
             <p class="green" id="count-down"></p>
+        </div>
+
+        <div class="centered" id="tile-settings" style="margin-top: 10px; max-width: 765px; text-align: left;">
+            <details>
+                <summary class="green" style="cursor: pointer; user-select: none;">Tile/Outline settings</summary>
+                <div style="padding: 8px 0 0 0;">
+                    <label style="display: block; margin-bottom: 6px;">
+                        <input type="checkbox" id="setting-local-true-tile" checked>
+                        Show local true tile
+                    </label>
+                    <label style="display: block; margin-bottom: 6px;">
+                        <input type="checkbox" id="setting-hovered-true-tile" checked>
+                        Show hovered true tile
+                    </label>
+                    <label style="display: block; margin-bottom: 6px;">
+                        <input type="checkbox" id="setting-priority-outline" checked>
+                        Show priority target outline
+                    </label>
+                    <label style="display: block; margin-bottom: 4px;" for="setting-hover-alpha">
+                        Hover tile opacity: <span id="setting-hover-alpha-value">152</span>
+                    </label>
+                    <input type="range" id="setting-hover-alpha" min="0" max="256" step="1" value="152" style="width: 100%; max-width: 320px;">
+
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #2a2a2a;">
+                        <div class="green" style="margin-bottom: 6px;">F-key tab bindings</div>
+                        <div id="setting-fkey-grid" style="display: grid; grid-template-columns: minmax(170px, 1fr) minmax(100px, 130px); gap: 6px 10px; align-items: center;"></div>
+                    </div>
+
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #2a2a2a; display: flex; align-items: center; gap: 8px;">
+                        <span>Keyboard focus:</span>
+                        <span id="focus-indicator" class="green" style="font-weight: bold;">Checking...</span>
+                    </div>
+                </div>
+            </details>
         </div>
     </center>
 
@@ -452,10 +353,222 @@
     <script type="module">
         import { Client } from './client/client.js';
 
-        window.gameClient = new Client(<%= nodeid %>, <%= lowmem %>, <%= members %>);
+        const TAB_LABELS = [
+            'Combat',
+            'Stats',
+            'Quest',
+            'Inventory',
+            'Equipment',
+            'Prayer',
+            'Magic',
+            'Friends',
+            'Ignore',
+            'Logout',
+            'Options',
+            'Emotes',
+            'Music',
+            'Tab 14',
+            'Tab 15'
+        ];
+
+        const DEFAULT_FKEY_BINDINGS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0];
+
+        function sanitizeFKeyBindings(bindings) {
+            const sanitized = new Array(TAB_LABELS.length).fill(0);
+            const used = new Set();
+            for (let i = 0; i < TAB_LABELS.length; i++) {
+                const value = Number.parseInt(String(bindings?.[i] ?? 0), 10);
+                if (Number.isNaN(value) || value < 1 || value > 9 || used.has(value)) {
+                    sanitized[i] = 0;
+                    continue;
+                }
+                sanitized[i] = value;
+                used.add(value);
+            }
+            return sanitized;
+        }
+
+        function parseFKeyBindings(key, fallback) {
+            const raw = localStorage.getItem(key);
+            if (!raw) return sanitizeFKeyBindings(fallback);
+            try {
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return sanitizeFKeyBindings(fallback);
+                return sanitizeFKeyBindings(parsed);
+            } catch (_e) {
+                return sanitizeFKeyBindings(fallback);
+            }
+        }
+
+        function createFKeyBindingControls() {
+            const grid = document.getElementById('setting-fkey-grid');
+            if (!grid) return;
+            grid.innerHTML = '';
+            for (let i = 0; i < TAB_LABELS.length; i++) {
+                const label = document.createElement('label');
+                label.setAttribute('for', `setting-fkey-${i}`);
+                label.textContent = TAB_LABELS[i];
+                const select = document.createElement('select');
+                select.id = `setting-fkey-${i}`;
+                const noneOption = document.createElement('option');
+                noneOption.value = '0';
+                noneOption.textContent = 'None';
+                select.appendChild(noneOption);
+                for (let f = 1; f <= 9; f++) {
+                    const option = document.createElement('option');
+                    option.value = String(f);
+                    option.textContent = `F${f}`;
+                    select.appendChild(option);
+                }
+                grid.appendChild(label);
+                grid.appendChild(select);
+            }
+        }
+
+        function readSettingsFromStorage() {
+            const parseBool = (key, fallback) => {
+                const value = localStorage.getItem(key);
+                return value === null ? fallback : value === 'true';
+            };
+            const parseAlpha = (key, fallback) => {
+                const value = localStorage.getItem(key);
+                if (value === null) return fallback;
+                const parsed = Number.parseInt(value, 10);
+                return Number.isNaN(parsed) ? fallback : Math.max(0, Math.min(256, parsed));
+            };
+            return {
+                showLocalTrueTile: parseBool('setting.showLocalTrueTile', true),
+                showHoveredTrueTile: parseBool('setting.showHoveredTrueTile', true),
+                showPriorityOutline: parseBool('setting.showPriorityOutline', true),
+                hoveredTileAlpha: parseAlpha('setting.hoveredTileAlpha', 152),
+                fKeyBindings: parseFKeyBindings('setting.fKeyBindings', DEFAULT_FKEY_BINDINGS)
+            };
+        }
+
+        function applySettingsToUi(settings) {
+            const localTile = document.getElementById('setting-local-true-tile');
+            const hoveredTile = document.getElementById('setting-hovered-true-tile');
+            const priority = document.getElementById('setting-priority-outline');
+            const alpha = document.getElementById('setting-hover-alpha');
+            const alphaValue = document.getElementById('setting-hover-alpha-value');
+            if (localTile) localTile.checked = settings.showLocalTrueTile;
+            if (hoveredTile) hoveredTile.checked = settings.showHoveredTrueTile;
+            if (priority) priority.checked = settings.showPriorityOutline;
+            if (alpha) alpha.value = String(settings.hoveredTileAlpha);
+            if (alphaValue) alphaValue.textContent = String(settings.hoveredTileAlpha);
+            for (let i = 0; i < TAB_LABELS.length; i++) {
+                const select = document.getElementById(`setting-fkey-${i}`);
+                if (select) select.value = String(settings.fKeyBindings[i] ?? 0);
+            }
+        }
+
+        function saveSettings(settings) {
+            localStorage.setItem('setting.showLocalTrueTile', String(settings.showLocalTrueTile));
+            localStorage.setItem('setting.showHoveredTrueTile', String(settings.showHoveredTrueTile));
+            localStorage.setItem('setting.showPriorityOutline', String(settings.showPriorityOutline));
+            localStorage.setItem('setting.hoveredTileAlpha', String(settings.hoveredTileAlpha));
+            localStorage.setItem('setting.fKeyBindings', JSON.stringify(settings.fKeyBindings));
+        }
+
+        function applySettingsToClient(client, settings) {
+            if (typeof client.applyOverlayUiSettings === 'function') {
+                client.applyOverlayUiSettings(settings.showLocalTrueTile, settings.showHoveredTrueTile, settings.showPriorityOutline, settings.hoveredTileAlpha);
+            }
+            if (typeof client.applyFKeyBindings === 'function') {
+                client.applyFKeyBindings(settings.fKeyBindings);
+            }
+        }
+
+        function setupFocusIndicator() {
+            const indicator = document.getElementById('focus-indicator');
+            const game = document.getElementById('game');
+            const canvasEl = document.getElementById('canvas');
+            const updateIndicator = () => {
+                if (!indicator || !canvasEl) return;
+                const focused = document.hasFocus() && document.activeElement === canvasEl;
+                indicator.textContent = focused ? 'Focused' : 'Not focused';
+                indicator.style.color = focused ? '#79ff79' : '#ff9a76';
+            };
+            const focusCanvasBestEffort = () => {
+                if (!canvasEl || !document.hasFocus()) return;
+                const active = document.activeElement;
+                if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+                    updateIndicator();
+                    return;
+                }
+                canvasEl.focus({ preventScroll: true });
+                updateIndicator();
+            };
+            canvasEl?.addEventListener('focus', updateIndicator);
+            canvasEl?.addEventListener('blur', updateIndicator);
+            window.addEventListener('focus', () => { window.setTimeout(focusCanvasBestEffort, 0); });
+            window.addEventListener('blur', updateIndicator);
+            document.addEventListener('visibilitychange', updateIndicator);
+            game?.addEventListener('pointerdown', () => { window.setTimeout(focusCanvasBestEffort, 0); });
+            window.setTimeout(focusCanvasBestEffort, 0);
+            updateIndicator();
+        }
+
+        function setupSettingsUi(client, settings) {
+            const localTile = document.getElementById('setting-local-true-tile');
+            const hoveredTile = document.getElementById('setting-hovered-true-tile');
+            const priority = document.getElementById('setting-priority-outline');
+            const alpha = document.getElementById('setting-hover-alpha');
+            const alphaValue = document.getElementById('setting-hover-alpha-value');
+            const syncClient = () => {
+                settings.showLocalTrueTile = Boolean(localTile?.checked);
+                settings.showHoveredTrueTile = Boolean(hoveredTile?.checked);
+                settings.showPriorityOutline = Boolean(priority?.checked);
+                settings.hoveredTileAlpha = alpha ? Number.parseInt(alpha.value, 10) : 152;
+                if (alphaValue) alphaValue.textContent = String(settings.hoveredTileAlpha ?? 152);
+                saveSettings(settings);
+                applySettingsToClient(client, settings);
+            };
+            const handleBindingChange = (tabIndex, nextValue) => {
+                const normalized = Number.isFinite(nextValue) ? nextValue | 0 : 0;
+                const fKey = normalized >= 1 && normalized <= 9 ? normalized : 0;
+                if (fKey > 0) {
+                    for (let i = 0; i < settings.fKeyBindings.length; i++) {
+                        if (i !== tabIndex && settings.fKeyBindings[i] === fKey) {
+                            settings.fKeyBindings[i] = 0;
+                        }
+                    }
+                }
+                settings.fKeyBindings[tabIndex] = fKey;
+                applySettingsToUi(settings);
+                saveSettings(settings);
+                applySettingsToClient(client, settings);
+            };
+            localTile?.addEventListener('change', syncClient);
+            hoveredTile?.addEventListener('change', syncClient);
+            priority?.addEventListener('change', syncClient);
+            alpha?.addEventListener('input', syncClient);
+            alpha?.addEventListener('change', syncClient);
+            for (let i = 0; i < TAB_LABELS.length; i++) {
+                const select = document.getElementById(`setting-fkey-${i}`);
+                select?.addEventListener('change', () => {
+                    handleBindingChange(i, Number.parseInt(select.value, 10));
+                });
+            }
+        }
+
+        (() => {
+            const client = new Client(<%= nodeid %>, <%= lowmem %>, <%= members %>);
+            window.gameClient = client;
+            createFKeyBindingControls();
+            const settings = readSettingsFromStorage();
+            applySettingsToUi(settings);
+            applySettingsToClient(client, settings);
+            setupSettingsUi(client, settings);
+            setupFocusIndicator();
+
+            window.addEventListener('beforeunload', (e) => {
+                e.preventDefault();
+                e.returnValue = '';
+            });
+        })();
+
         loadSettings();
-        loadOverlaySettings();
-        loadFKeySettings();
     </script>
 </body>
 
